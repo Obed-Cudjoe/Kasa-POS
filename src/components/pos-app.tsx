@@ -330,6 +330,13 @@ export function PosApp() {
     return () => clearInterval(timer)
   }, [cloudSignedIn, online, syncData])
 
+  // Drain the Dexie outbox when a cloud session/connectivity returns and after new local writes.
+  // The 20-second foreground poll remains a fallback while this PWA tab is open.
+  useEffect(() => {
+    if (!cloudSignedIn || APP_DEMO_MODE || !online || pendingCount === 0) return
+    void syncData(true)
+  }, [cloudSignedIn, online, pendingCount])
+
   useEffect(() => {
     if (!cloudSignedIn || APP_DEMO_MODE || !employee) return
     const client = getBrowserSupabase()

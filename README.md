@@ -103,7 +103,7 @@ scripts/seed-store.sql           Optional small-cloud-store onboarding seed exam
 ### Offline sync and inventory
 
 - A local order/stock/shift/refund write is committed to IndexedDB before any cloud request.
-- UUID outbox events are pushed through an authenticated Route Handler; the database `sync_events` key makes retries idempotent.
+- UUID outbox events are pushed through an authenticated Route Handler; the database `sync_events` key makes retries idempotent. The signed-in app drains the queue when connectivity/session returns and polls every 20 seconds while open. If the browser/PWA is fully closed, sync waits until the next open; no authenticated Service Worker background job is claimed.
 - Cloud PostgreSQL is the only cloud database. Dexie is the on-device offline store.
 - Sale, return, receiving and damage movements are signed deltas; the cloud stock projection adds deltas under row locks, avoiding last-write-wins loss.
 - Physical counts carry a `base_inventory_version`. If stock changed since the count started, the server rejects that count for review instead of overwriting newer sales/returns. A negative projected balance from concurrent/offline sales is retained and flagged for review.
