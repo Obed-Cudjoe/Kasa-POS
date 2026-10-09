@@ -1,0 +1,16 @@
+node_modules/
+.next/
+.next-dev/
+out/
+build/
+dist/
+coverage/
+public/sw.js
+public/swe-worker-*.js
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+.vercel/
+.DS_Store
+*.log
