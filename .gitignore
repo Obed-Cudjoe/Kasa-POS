@@ -5,6 +5,9 @@ out/
 build/
 dist/
 coverage/
+.open-next/
+.wrangler/
+.dev.vars
 public/sw.js
 public/swe-worker-*.js
 *.tsbuildinfo

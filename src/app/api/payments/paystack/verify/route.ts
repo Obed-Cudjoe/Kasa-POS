@@ -13,6 +13,12 @@ export async function POST(request: Request) {
       .select('id,store_id,order_id,method,status,amount,currency_code,provider_reference')
       .eq('store_id', actor.storeId).eq('order_id', body.orderId).eq('provider', 'paystack').eq('provider_reference', reference).maybeSingle()
     if (error || !payment) return Response.json({ error: 'The reference is not linked to this store/order.' }, { status: 404 })
+    const { data: order, error: orderError } = await actor.admin.from('orders').select('employee_id')
+      .eq('store_id', actor.storeId).eq('id', payment.order_id).maybeSingle()
+    if (orderError || !order) return Response.json({ error: 'The original sale was not found in this store.' }, { status: 404 })
+    if (actor.role === 'cashier' && order.employee_id !== actor.employeeId) {
+      return Response.json({ error: 'Cashiers may verify only their own sales.' }, { status: 403 })
+    }
     const result = await paystackFetch(`/transaction/verify/${encodeURIComponent(reference)}`, { method: 'GET' })
     const data = result.data as Record<string, unknown> | undefined
     const status = typeof data?.status === 'string' ? data.status : 'unknown'

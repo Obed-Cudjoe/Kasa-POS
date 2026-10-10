@@ -8,9 +8,9 @@ export const demoUuid = (sequence: number) => `${DEMO_ID_PREFIX}${String(sequenc
 export const DEMO_STORE_ID = '2f5b0c90-4c2f-4c3b-8db6-3b67d0e10001'
 export const DEMO_DEVICE_ID = '2f5b0c90-4c2f-4c3b-8db6-3b67d0e10002'
 export const DEMO_EMPLOYEES: Employee[] = [
-  { id: '2f5b0c90-4c2f-4c3b-8db6-3b67d0e10011', storeId: DEMO_STORE_ID, displayName: 'Ama Mensah', role: 'cashier', status: 'active', createdAt: new Date().toISOString() },
-  { id: '2f5b0c90-4c2f-4c3b-8db6-3b67d0e10012', storeId: DEMO_STORE_ID, displayName: 'Kojo Owusu', role: 'manager', status: 'active', createdAt: new Date().toISOString() },
-  { id: '2f5b0c90-4c2f-4c3b-8db6-3b67d0e10013', storeId: DEMO_STORE_ID, displayName: 'Akosua Boateng', role: 'owner', status: 'active', createdAt: new Date().toISOString() },
+  { id: '2f5b0c90-4c2f-4c3b-8db6-3b67d0e10011', storeId: DEMO_STORE_ID, displayName: 'Ama Mensah', role: 'cashier', refundLimitMinor: 0, status: 'active', createdAt: new Date().toISOString() },
+  { id: '2f5b0c90-4c2f-4c3b-8db6-3b67d0e10012', storeId: DEMO_STORE_ID, displayName: 'Kojo Owusu', role: 'manager', refundLimitMinor: 50_000, status: 'active', createdAt: new Date().toISOString() },
+  { id: '2f5b0c90-4c2f-4c3b-8db6-3b67d0e10013', storeId: DEMO_STORE_ID, displayName: 'Akosua Boateng', role: 'owner', refundLimitMinor: Number.MAX_SAFE_INTEGER, status: 'active', createdAt: new Date().toISOString() },
 ]
 
 export const DEMO_TAX_CATEGORIES: TaxCategory[] = [
@@ -182,7 +182,21 @@ export async function ensureDemoData() {
   if (typeof window === 'undefined') return
   const seeded = await getMeta<boolean>('demo-seeded-v1', false)
   const count = await db.products.count()
-  if (seeded && count) return
+  if (seeded && count) {
+    const legacyDemoLimits = new Map<string, number | null>([
+      [DEMO_EMPLOYEES[1].id, 100_000],
+      [DEMO_EMPLOYEES[2].id, null],
+    ])
+    for (const demoEmployee of DEMO_EMPLOYEES) {
+      const existing = await db.employees.get(demoEmployee.id)
+      const wasLegacySeed = legacyDemoLimits.has(demoEmployee.id)
+        && Object.is(existing?.refundLimitMinor, legacyDemoLimits.get(demoEmployee.id))
+      if (existing && (existing.refundLimitMinor === undefined || wasLegacySeed)) {
+        await db.employees.update(existing.id, { refundLimitMinor: demoEmployee.refundLimitMinor })
+      }
+    }
+    return
+  }
 
   const categories = [...new Set(DEMO_PRODUCTS.map((product) => product.categoryId))]
   const inventory: InventoryItem[] = DEMO_PRODUCTS.map((product) => {

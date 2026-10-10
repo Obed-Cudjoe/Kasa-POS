@@ -22,6 +22,7 @@ import { downloadReceiptPdf, printReceiptEscPos, shareReceipt } from '@/lib/rece
 import { getAccessToken, getBrowserSupabase } from '@/lib/supabase-browser'
 import { hasOfflinePin, saveOfflinePin, verifyOfflinePin, clearOfflinePin } from '@/lib/offline-pin'
 import { pullCloud, syncNow } from '@/lib/sync-client'
+import { PRIVACY_NOTICE_PATH, PRIVACY_NOTICE_VERSION } from '@/lib/privacy'
 import type { CalculatedLine, Employee, Order, PaymentMethod, Product, Refund, Shift, TaxCategory, TaxComponent, TaxTreatment, UserRole } from '@/lib/types'
 
 type View = 'checkout' | 'transactions' | 'products' | 'inventory' | 'reports' | 'shifts' | 'team' | 'tax' | 'settings' | 'more'
@@ -40,6 +41,7 @@ const initials = (name: string) => name.split(/\s+/).filter(Boolean).slice(0, 2)
 const titleCase = (value: string) => value.replaceAll('_', ' ').replace(/\b\w/g, (char) => char.toUpperCase())
 const stamp = (value: string) => new Date(value).toLocaleString('en-GH', { dateStyle: 'medium', timeStyle: 'short' })
 const roleLabel = (role: UserRole) => role === 'owner' ? 'Owner' : role === 'manager' ? 'Manager' : 'Cashier'
+const refundLimitLabel = (employee: Employee) => employee.refundLimitMinor === null ? 'No cap' : money(employee.refundLimitMinor ?? 0)
 const stockEmoji = (category: string) => category === 'Drinks' ? '◉' : category === 'Fresh food' ? '✳' : category === 'Household' ? '✦' : category === 'Snacks' ? '◇' : '▦'
 const statusTone = (status: string) => ['paid', 'processed', 'confirmed', 'synced', 'open'].includes(status) ? 'green' : ['pending_payment', 'pending', 'processing', 'refund_pending', 'local'].includes(status) ? 'amber' : ['failed', 'conflict', 'voided', 'needs_attention'].includes(status) ? 'red' : 'blue'
 const roleOrder: Record<UserRole, number> = { owner: 0, manager: 1, cashier: 2 }
@@ -119,6 +121,8 @@ export function PosApp() {
   const [momoNetwork, setMomoNetwork] = useState('mtn')
   const [customerPhone, setCustomerPhone] = useState('')
   const [customerEmail, setCustomerEmail] = useState('')
+  const [paymentConsent, setPaymentConsent] = useState(false)
+  const [receiptConsent, setReceiptConsent] = useState(false)
   const [pendingPayment, setPendingPayment] = useState<PendingPayment | null>(null)
   const [paymentChecking, setPaymentChecking] = useState(false)
   const [receiptOrder, setReceiptOrder] = useState<Order | null>(null)
@@ -129,7 +133,7 @@ export function PosApp() {
   const [tableSearch, setTableSearch] = useState('')
   const [productForm, setProductForm] = useState<ProductFormState | null>(null)
   const [taxForm, setTaxForm] = useState<TaxFormState | null>(null)
-  const [employeeForm, setEmployeeForm] = useState<{ id?: string; displayName: string; role: UserRole } | null>(null)
+  const [employeeForm, setEmployeeForm] = useState<{ id?: string; displayName: string; role: UserRole; refundLimit: string } | null>(null)
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null)
   const [refundAvailable, setRefundAvailable] = useState<Record<string, number>>({})
   const [refundQty, setRefundQty] = useState<Record<string, number>>({})
@@ -165,6 +169,17 @@ export function PosApp() {
     setToast({ message, tone })
     toastTimer.current = setTimeout(() => setToast(null), 4200)
   }, [])
+
+  const recordPrivacyConsent = async (purpose: 'digital_payment_contact' | 'receipt_email', orderId: string, token: string) => {
+    const response = await fetch('/api/privacy/consent', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      body: JSON.stringify({ orderId, purpose, policyVersion: PRIVACY_NOTICE_VERSION }),
+      cache: 'no-store',
+    })
+    const data = await response.json() as { error?: string }
+    if (!response.ok) throw new Error(data.error || 'Privacy consent could not be recorded.')
+  }
 
   const refreshLocalState = useCallback(async () => {
     const [productRows, taxRows, stockRows, orderRows, refundRows, employeeRows, shiftRows, outboxRows] = await Promise.all([
@@ -453,6 +468,7 @@ export function PosApp() {
     setCashReceived(inputFromMinor(cartTotals.totalMinor))
     setCustomerEmail('')
     setCustomerPhone('')
+    setPaymentConsent(false)
     setPendingPayment(null)
     setModal('payment')
   }
@@ -468,6 +484,7 @@ export function PosApp() {
       setCart({})
       setReceiptOrder(sale.order)
       setReceiptRefund(null)
+      setReceiptConsent(false)
       setReceiptEmail('')
       setModal('receipt')
       await refreshLocalState()
@@ -479,6 +496,7 @@ export function PosApp() {
 
   const startDigitalPayment = async () => {
     if (!employee || !activeShift || (paymentMethod !== 'card' && paymentMethod !== 'momo')) return
+    if (!APP_DEMO_MODE && !paymentConsent) { showToast('Confirm that the customer agreed to payment-contact processing before continuing.', 'error'); return }
     let requestContext: PendingPayment | null = null
     try {
       if (APP_DEMO_MODE) {
@@ -489,6 +507,7 @@ export function PosApp() {
         setCart({})
         setReceiptOrder(sale.order)
         setReceiptRefund(null)
+        setReceiptConsent(false)
         setModal('receipt')
         await refreshLocalState()
         return
@@ -512,6 +531,7 @@ export function PosApp() {
         setPendingPayment((value) => value ? { ...value, retryable: true, message: 'Sign in to cloud before a real card or mobile-money request can be sent. The sale remains pending.' } : value)
         return
       }
+      await recordPrivacyConsent('digital_payment_contact', pending.order.id, token)
       const response = await fetch('/api/payments/paystack/initialize', {
         method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
         body: JSON.stringify({ orderId: pending.order.id, paymentId: pending.payment.id, email: customerEmail.trim(), phone: customerPhone.trim(), network: momoNetwork }),
@@ -569,6 +589,7 @@ export function PosApp() {
         const synced = await db.orders.get(order.id)
         setReceiptOrder(synced ?? order)
         setReceiptRefund(null)
+        setReceiptConsent(false)
         setPendingPayment(null)
         setModal('receipt')
         showToast('Provider confirmed payment. Sale finalized.', 'success')
@@ -599,6 +620,7 @@ export function PosApp() {
 
   const retryPendingPayment = async (current: PendingPayment) => {
     if (APP_DEMO_MODE || !online || !cloudSignedIn) return
+    if (!paymentConsent) { showToast('Confirm that the customer agreed to payment-contact processing before retrying.', 'error'); return }
     if (!customerEmail.trim() || (current.method === 'momo' && !customerPhone.trim())) {
       showToast('Enter the customer email and, for mobile money, phone number before requesting payment.', 'error')
       return
@@ -610,6 +632,7 @@ export function PosApp() {
       if (outboxEvent && outboxEvent.status !== 'synced') throw new Error('The pending sale has not synced to cloud; no provider request was sent.')
       const token = await getAccessToken()
       if (!token) throw new Error('Sign in again before requesting a digital payment.')
+      await recordPrivacyConsent('digital_payment_contact', current.orderId, token)
       const response = await fetch('/api/payments/paystack/initialize', {
         method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
         body: JSON.stringify({ orderId: current.orderId, paymentId: current.paymentId, email: customerEmail.trim(), phone: customerPhone.trim(), network: momoNetwork }),
@@ -694,18 +717,25 @@ export function PosApp() {
   const openReceipt = (order: Order, refund?: Refund) => {
     setReceiptOrder(order)
     setReceiptRefund(refund ?? null)
+    setReceiptConsent(false)
     setReceiptEmail(order.receiptEmail ?? '')
     setModal('receipt')
   }
 
   const beginRefund = async (order: Order) => {
-    if (!isManager) { showToast('A manager or owner must approve refunds in this MVP.', 'error'); return }
+    if (!employee || (employee.refundLimitMinor !== null && (employee.refundLimitMinor ?? 0) <= 0)) {
+      showToast('Your configured refund authorization is zero. Ask the owner to assign a refund limit.', 'error')
+      return
+    }
     if (order.status === 'pending_payment' || !order.paymentMethod) { showToast('This sale has no confirmed original tender to refund.', 'error'); return }
     if (!['confirmed', 'demo_simulated', 'refund_pending', 'partially_refunded'].includes(order.paymentStatus ?? '')) { showToast('Only a confirmed original payment can be refunded.', 'error'); return }
     const prior = await db.refunds.where('orderId').equals(order.id).toArray()
+    if (prior.some((refund) => ['pending', 'processing', 'needs_attention'].includes(refund.status))) {
+      showToast('A prior refund is still unresolved. Reconcile its provider status before creating another.', 'error')
+      return
+    }
     const returned = new Map<string, number>()
     for (const refund of prior) {
-      if (refund.status === 'failed') continue
       for (const line of refund.lines) returned.set(line.productId, (returned.get(line.productId) ?? 0) + line.quantity)
     }
     const available: Record<string, number> = {}
@@ -730,6 +760,7 @@ export function PosApp() {
       return { amount: result.amount + Math.round(line.grossMinor * fraction), tax: result.tax + Math.round(line.taxMinor * fraction) }
     }, { amount: 0, tax: 0 })
   }, [selectedOrder, refundQty, refundAvailable])
+  const refundOverLimit = Boolean(employee && employee.refundLimitMinor !== null && refundEstimate.amount > (employee.refundLimitMinor ?? 0))
 
   const submitRefund = async () => {
     if (!selectedOrder || !employee) return
@@ -770,6 +801,7 @@ export function PosApp() {
       } else showToast('Cash refund recorded offline; accepted items were restocked.', 'success')
       setReceiptOrder(result.order)
       setReceiptRefund((await db.refunds.get(result.refund.id)) ?? result.refund)
+      setReceiptConsent(false)
       setModal('receipt')
       await refreshLocalState()
     } catch (error) {
@@ -923,7 +955,10 @@ export function PosApp() {
 
   const openEmployeeForm = (person?: Employee) => {
     if (!isManager) return
-    setEmployeeForm(person ? { id: person.id, displayName: person.displayName, role: person.role } : { displayName: '', role: 'cashier' })
+    setEmployeeForm(person ? {
+      id: person.id, displayName: person.displayName, role: person.role,
+      refundLimit: person.refundLimitMinor === null ? '' : inputFromMinor(person.refundLimitMinor ?? 0),
+    } : { displayName: '', role: 'cashier', refundLimit: '0.00' })
     setModal('employee')
   }
 
@@ -932,17 +967,57 @@ export function PosApp() {
     if (!employee || !employeeForm) return
     if (employee.role === 'manager' && employeeForm.role === 'owner') { showToast('Only an owner can grant the owner role.', 'error'); return }
     if (employee.role === 'manager' && employeeForm.id && employees.find((person) => person.id === employeeForm.id)?.role === 'owner') { showToast('Managers cannot edit an owner profile.', 'error'); return }
+    const existing = employeeForm.id ? employees.find((person) => person.id === employeeForm.id) : undefined
+    const previousLimit = existing ? (existing.refundLimitMinor === undefined ? 0 : existing.refundLimitMinor) : 0
+    if (employee.role === 'owner' && !employeeForm.refundLimit.trim() && employeeForm.role !== 'owner') {
+      showToast('Only an owner profile may have no per-transaction refund cap; set a finite limit for staff.', 'error')
+      return
+    }
+    const proposedLimit = employee.role === 'owner'
+      ? (employeeForm.refundLimit.trim() ? parseMoneyInput(employeeForm.refundLimit) : null)
+      : previousLimit
+    if (proposedLimit !== null && (!Number.isSafeInteger(proposedLimit) || proposedLimit < 0)) {
+      showToast('Enter a valid non-negative refund limit in GHS, or leave it blank for no cap on an owner profile.', 'error')
+      return
+    }
     const saved: Employee = {
       id: employeeForm.id ?? newId(), storeId: employee.storeId, displayName: employeeForm.displayName.trim(),
-      role: employeeForm.role, status: 'active', createdAt: new Date().toISOString(),
+      role: employeeForm.role, refundLimitMinor: proposedLimit, status: 'active', createdAt: new Date().toISOString(),
     }
     if (!saved.displayName) return showToast('Enter a staff name.', 'error')
+    const refundLimitChanged = employee.role === 'owner' && proposedLimit !== previousLimit
+    if (refundLimitChanged && !APP_DEMO_MODE && (!online || !cloudSignedIn)) {
+      showToast('Changing refund limits requires an online owner cloud session; no limit change was saved.', 'error')
+      return
+    }
     try {
-      await saveEmployee(saved, employee)
+      const saveLimitToCloud = async () => {
+        const token = await getAccessToken()
+        if (!token) throw new Error('Sign in again before saving a refund limit.')
+        const response = await fetch('/api/employees/refund-limit', {
+          method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+          body: JSON.stringify({ employeeId: saved.id, refundLimitMinor: proposedLimit }), cache: 'no-store',
+        })
+        const data = await response.json() as { error?: string }
+        if (!response.ok) throw new Error(data.error || 'Refund limit could not be saved in cloud.')
+      }
+      // Set a finite limit before changing an existing uncapped owner to staff so the
+      // database's owner-only NULL constraint is never transiently violated.
+      if (refundLimitChanged && existing && proposedLimit !== null && !APP_DEMO_MODE) await saveLimitToCloud()
+      const syncEvent = await saveEmployee(saved, employee)
+      if (!APP_DEMO_MODE && online && cloudSignedIn) {
+        await syncNow()
+        const eventStatus = await db.syncOutbox.get(syncEvent.eventId)
+        if (eventStatus?.status !== 'synced') throw new Error('Employee profile remains queued or needs review; the change was not confirmed by cloud sync.')
+        // New profiles must exist in cloud before their owner-authorized ceiling can be written.
+        if (refundLimitChanged && (!existing || proposedLimit === null)) {
+          await saveLimitToCloud()
+          await pullCloud()
+        }
+      }
       setModal(null)
       await refreshLocalState()
-      showToast('Staff role saved locally. A Supabase Auth login must be linked separately for cloud access.', 'success')
-      if (!APP_DEMO_MODE && online) void syncData(true)
+      showToast('Staff role and refund authorization saved. A Supabase Auth login must be linked separately for cloud access.', 'success')
     } catch (error) { showToast(error instanceof Error ? error.message : 'Staff profile could not be saved.', 'error') }
   }
 
@@ -957,6 +1032,7 @@ export function PosApp() {
 
   const emailReceipt = async () => {
     if (!receiptOrder || !receiptEmail.trim()) { showToast('Enter a recipient email address.', 'error'); return }
+    if (!receiptConsent) { showToast('Confirm that the customer asked to receive this receipt by email.', 'error'); return }
     if (APP_DEMO_MODE || !cloudSignedIn) {
       await shareReceipt(receiptOrder, receiptRefund ?? undefined)
       showToast('Opened the device share sheet or downloaded a PDF. Managed email delivery is not configured in demo mode.', 'plain')
@@ -964,6 +1040,8 @@ export function PosApp() {
     }
     try {
       const token = await getAccessToken()
+      if (!token) throw new Error('Sign in again before sending a managed email receipt.')
+      await recordPrivacyConsent('receipt_email', receiptOrder.id, token)
       const response = await fetch('/api/receipts/email', {
         method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
         body: JSON.stringify({ orderId: receiptOrder.id, email: receiptEmail.trim() }), cache: 'no-store',
@@ -1130,7 +1208,7 @@ export function PosApp() {
       <div className="card">
         <div className="table-toolbar"><div><strong>{orders.length} transactions</strong><div className="subtle" style={{ marginTop: 3, fontSize: 10 }}>Digital payments stay pending until the provider confirms them.</div></div><div className="table-search"><input placeholder="Search receipt, cashier or tender…" value={tableSearch} onChange={(event) => setTableSearch(event.target.value)} /></div></div>
         <div className="table-wrap"><table className="data-table"><thead><tr><th>Receipt</th><th>Date</th><th>Cashier</th><th>Tender</th><th>Payment status</th><th>Tax</th><th>Total</th><th /></tr></thead><tbody>
-          {filteredOrders.map((order) => <tr key={order.id}><td><strong>{order.orderNumber}</strong><div className="subtle" style={{ marginTop: 3 }}>{order.items.length} line(s)</div></td><td>{stamp(order.createdAt)}</td><td>{order.employeeName}</td><td>{order.paymentMethod ? titleCase(order.paymentMethod) : '—'}{order.paymentMethod === 'momo' && order.providerReference && <div className="subtle" style={{ marginTop: 3 }}>{order.providerReference}</div>}</td><td><StatusBadge status={order.paymentStatus ?? order.status} label={order.paymentStatus === 'demo_simulated' ? 'Simulated · demo' : titleCase(order.paymentStatus ?? order.status)} /></td><td>{money(order.taxMinor)}</td><td><strong>{money(order.totalMinor - order.refundedMinor)}</strong></td><td><div className="table-row-actions"><button className="btn small" onClick={() => openReceipt(order)}><ReceiptText size={12} />View</button>{!APP_DEMO_MODE && order.status === 'pending_payment' && order.paymentMethod && order.paymentMethod !== 'cash' && <button className="btn small soft" onClick={() => void inspectPendingOrderPayment(order)}><RefreshCw size={12} />{order.providerReference ? 'Check payment' : 'Continue'}</button>}{isManager && order.status !== 'refunded' && order.status !== 'pending_payment' && <button className="btn small soft" onClick={() => void beginRefund(order)}><RotateCcw size={12} />Refund</button>}</div></td></tr>)}
+          {filteredOrders.map((order) => <tr key={order.id}><td><strong>{order.orderNumber}</strong><div className="subtle" style={{ marginTop: 3 }}>{order.items.length} line(s)</div></td><td>{stamp(order.createdAt)}</td><td>{order.employeeName}</td><td>{order.paymentMethod ? titleCase(order.paymentMethod) : '—'}{order.paymentMethod === 'momo' && order.providerReference && <div className="subtle" style={{ marginTop: 3 }}>{order.providerReference}</div>}</td><td><StatusBadge status={order.paymentStatus ?? order.status} label={order.paymentStatus === 'demo_simulated' ? 'Simulated · demo' : titleCase(order.paymentStatus ?? order.status)} /></td><td>{money(order.taxMinor)}</td><td><strong>{money(order.totalMinor - order.refundedMinor)}</strong></td><td><div className="table-row-actions"><button className="btn small" onClick={() => openReceipt(order)}><ReceiptText size={12} />View</button>{!APP_DEMO_MODE && order.status === 'pending_payment' && order.paymentMethod && order.paymentMethod !== 'cash' && <button className="btn small soft" onClick={() => void inspectPendingOrderPayment(order)}><RefreshCw size={12} />{order.providerReference ? 'Check payment' : 'Continue'}</button>}{employee && (employee.refundLimitMinor === null || (employee.refundLimitMinor ?? 0) > 0) && order.status !== 'refunded' && order.status !== 'pending_payment' && <button className="btn small soft" onClick={() => void beginRefund(order)}><RotateCcw size={12} />Refund</button>}</div></td></tr>)}
           {!filteredOrders.length && <tr><td colSpan={8}><div className="empty-state"><span className="empty-state-icon"><History size={20} /></span><h3>No matching transactions</h3><p>Completed cash sales and provider-confirmed digital sales will appear here.</p></div></td></tr>}
         </tbody></table></div>
         {APP_DEMO_MODE && <div className="info-note" style={{ marginTop: 12 }}>Demo sample transactions are illustrative. They are not provider-verified payments or certified tax receipts.</div>}
@@ -1197,7 +1275,7 @@ export function PosApp() {
   const renderTeam = () => (
     <>
       <SectionHeading title="Team" subtitle="Define owner, manager and cashier profiles. Production staff need a linked Supabase Auth account to sign in." actions={<button className="btn primary" onClick={() => openEmployeeForm()}><UserPlus size={14} />Add employee</button>} />
-      <div className="card"><div className="table-toolbar"><div><strong>{employees.length} active profiles</strong><div className="subtle" style={{ marginTop: 3, fontSize: 10 }}>Roles: owner (all), manager (operations/refunds), cashier (checkout and own shift).</div></div><div className="table-search"><input placeholder="Search team…" value={tableSearch} onChange={(event) => setTableSearch(event.target.value)} /></div></div><div className="table-wrap"><table className="data-table"><thead><tr><th>Employee</th><th>Role</th><th>Login / profile</th><th>Active shift</th><th /></tr></thead><tbody>{filteredEmployees.map((person) => <tr key={person.id}><td><strong>{person.displayName}</strong></td><td><StatusBadge status={person.role} label={roleLabel(person.role)} /></td><td>{APP_DEMO_MODE ? <span className="subtle">Demo profile · local only</span> : person.authUserId ? <span className="badge green">Supabase linked</span> : <span className="badge amber">Auth invite needed</span>}</td><td>{shifts.some((shift) => shift.status === 'open' && shift.employeeId === person.id) ? <span className="badge green">Open</span> : <span className="subtle">—</span>}</td><td><div className="table-row-actions"><button className="btn small" onClick={() => openEmployeeForm(person)}>Edit role</button>{APP_DEMO_MODE && <button className="btn small soft" onClick={() => void setEmployeeSession(person)}>Switch</button>}</div></td></tr>)}</tbody></table></div><div className="info-note" style={{ marginTop: 14 }}>This local admin screen stores role profiles. It does not send invitations or create passwords. For live cloud login, create/invite the Auth user, then link its `auth_user_id` to this employee row in Supabase.</div></div>
+      <div className="card"><div className="table-toolbar"><div><strong>{employees.length} active profiles</strong><div className="subtle" style={{ marginTop: 3, fontSize: 10 }}>Refund access is controlled by a per-employee per-transaction limit; 0 disables refunds.</div></div><div className="table-search"><input placeholder="Search team…" value={tableSearch} onChange={(event) => setTableSearch(event.target.value)} /></div></div><div className="table-wrap"><table className="data-table"><thead><tr><th>Employee</th><th>Role</th><th>Refund limit / transaction</th><th>Login / profile</th><th>Active shift</th><th /></tr></thead><tbody>{filteredEmployees.map((person) => <tr key={person.id}><td><strong>{person.displayName}</strong></td><td><StatusBadge status={person.role} label={roleLabel(person.role)} /></td><td>{refundLimitLabel(person)}</td><td>{APP_DEMO_MODE ? <span className="subtle">Demo profile · local only</span> : person.authUserId ? <span className="badge green">Supabase linked</span> : <span className="badge amber">Auth invite needed</span>}</td><td>{shifts.some((shift) => shift.status === 'open' && shift.employeeId === person.id) ? <span className="badge green">Open</span> : <span className="subtle">—</span>}</td><td><div className="table-row-actions"><button className="btn small" onClick={() => openEmployeeForm(person)}>Edit role</button>{APP_DEMO_MODE && <button className="btn small soft" onClick={() => void setEmployeeSession(person)}>Switch</button>}</div></td></tr>)}</tbody></table></div><div className="info-note" style={{ marginTop: 14 }}>This local admin screen stores role profiles. It does not send invitations or create passwords. For live cloud login, create/invite the Auth user, then link its `auth_user_id` to this employee row in Supabase.</div></div>
     </>
   )
 
@@ -1261,7 +1339,7 @@ export function PosApp() {
         </main>
       </div>
 
-      {modal === 'payment' && <Modal title={pendingPayment ? 'Payment pending' : 'Complete sale'} description={pendingPayment ? 'This order remains unpaid until verified provider confirmation.' : 'Cash, card and mobile money. Digital tenders are never finalized from a redirect or screenshot.'} onClose={() => { if (pendingPayment) { setModal(null); setPendingPayment(null) } else setModal(null) }} footer={pendingPayment ? <><button className="btn" onClick={() => { setModal(null); setPendingPayment(null) }}>Close · keep pending</button>{pendingPayment.reference && !APP_DEMO_MODE && <button className="btn" disabled={!online || !cloudSignedIn || paymentChecking} onClick={() => void verifyPendingPayment(pendingPayment, true)}>{paymentChecking ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />}Check provider status</button>}{pendingPayment.retryable && !APP_DEMO_MODE && <button className="btn primary" disabled={!online || !cloudSignedIn || paymentChecking || !customerEmail.trim() || (pendingPayment.method === 'momo' && !customerPhone.trim())} onClick={() => void retryPendingPayment(pendingPayment)}>{paymentChecking ? <Loader2 size={14} className="spin" /> : <Smartphone size={14} />}{pendingPayment.reference ? 'Retry payment' : 'Request payment'}</button>}</> : <><button className="btn" onClick={() => setModal(null)}>Back to cart</button><button className="btn primary" disabled={paymentMethod === 'cash' ? parseMoneyInput(cashReceived) < cartTotals.totalMinor : !cartLines.length || (!APP_DEMO_MODE && online && (!customerEmail.trim() || (paymentMethod === 'momo' && !customerPhone.trim())))} onClick={() => paymentMethod === 'cash' ? void finishCashSale() : void startDigitalPayment()}>{paymentMethod === 'cash' ? <Banknote size={14} /> : paymentMethod === 'card' ? <CreditCard size={14} /> : <Smartphone size={14} />}{paymentMethod === 'cash' ? 'Record cash sale' : APP_DEMO_MODE ? `Simulate ${paymentMethod === 'momo' ? 'MoMo' : 'card'} approval · demo` : `Request ${paymentMethod === 'momo' ? 'MoMo' : 'card'} payment`}</button></>}>
+      {modal === 'payment' && <Modal title={pendingPayment ? 'Payment pending' : 'Complete sale'} description={pendingPayment ? 'This order remains unpaid until verified provider confirmation.' : 'Cash, card and mobile money. Digital tenders are never finalized from a redirect or screenshot.'} onClose={() => { if (pendingPayment) { setModal(null); setPendingPayment(null) } else setModal(null) }} footer={pendingPayment ? <><button className="btn" onClick={() => { setModal(null); setPendingPayment(null) }}>Close · keep pending</button>{pendingPayment.reference && !APP_DEMO_MODE && <button className="btn" disabled={!online || !cloudSignedIn || paymentChecking} onClick={() => void verifyPendingPayment(pendingPayment, true)}>{paymentChecking ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />}Check provider status</button>}{pendingPayment.retryable && !APP_DEMO_MODE && <button className="btn primary" disabled={!online || !cloudSignedIn || paymentChecking || !paymentConsent || !customerEmail.trim() || (pendingPayment.method === 'momo' && !customerPhone.trim())} onClick={() => void retryPendingPayment(pendingPayment)}>{paymentChecking ? <Loader2 size={14} className="spin" /> : <Smartphone size={14} />}{pendingPayment.reference ? 'Retry payment' : 'Request payment'}</button>}</> : <><button className="btn" onClick={() => setModal(null)}>Back to cart</button><button className="btn primary" disabled={paymentMethod === 'cash' ? parseMoneyInput(cashReceived) < cartTotals.totalMinor : !cartLines.length || (!APP_DEMO_MODE && (!paymentConsent || (online && (!customerEmail.trim() || (paymentMethod === 'momo' && !customerPhone.trim())))))} onClick={() => paymentMethod === 'cash' ? void finishCashSale() : void startDigitalPayment()}>{paymentMethod === 'cash' ? <Banknote size={14} /> : paymentMethod === 'card' ? <CreditCard size={14} /> : <Smartphone size={14} />}{paymentMethod === 'cash' ? 'Record cash sale' : APP_DEMO_MODE ? `Simulate ${paymentMethod === 'momo' ? 'MoMo' : 'card'} approval · demo` : `Request ${paymentMethod === 'momo' ? 'MoMo' : 'card'} payment`}</button></>}>
           {pendingPayment ? <div className="success-panel" style={{ paddingTop: 4 }}><div className="success-check" style={{ background: '#fff4dc', color: '#a26210' }}><Loader2 size={23} className={paymentChecking ? 'spin' : ''} /></div><h2>Awaiting confirmation</h2><p>{pendingPayment.message}</p><div className="receipt-paper"><div className="receipt-title">{pendingPayment.method === 'momo' ? 'Mobile-money request' : 'Card authorization'}</div><div className="receipt-line"><span>Order</span><strong>{orders.find((order) => order.id === pendingPayment.orderId)?.orderNumber ?? pendingPayment.orderId.slice(0, 8)}</strong></div><div className="receipt-line"><span>Reference</span><strong>{pendingPayment.reference ?? 'Not assigned yet'}</strong></div><div className="receipt-line"><span>Network</span><strong>{pendingPayment.network?.toUpperCase() ?? (pendingPayment.method === 'card' ? 'Card' : '—')}</strong></div></div><div className="attention-note" style={{ textAlign: 'left' }}><AlertTriangle size={14} />Do not hand over goods as paid until the POS receives verified server confirmation. A timeout is not proof of success or failure.</div>{pendingPayment.retryable && !APP_DEMO_MODE && <><div className="info-note" style={{ textAlign: 'left' }}>After a confirmed failed/abandoned attempt—or when no request was sent—you can create a new authorization for this same sale. Any saved provider reference is checked first to avoid a duplicate charge.</div><div className="form-grid"><div className="field"><label>Customer email</label><input type="email" value={customerEmail} onChange={(event) => setCustomerEmail(event.target.value)} placeholder="customer@example.com" /></div>{pendingPayment.method === 'momo' && <><div className="field"><label>Mobile-money network</label><select value={momoNetwork} onChange={(event) => setMomoNetwork(event.target.value)}><option value="mtn">MTN Mobile Money</option><option value="atl">ATMoney / Airtel Money</option><option value="vod">Telecel Cash</option></select></div><div className="field"><label>Customer phone</label><input inputMode="tel" value={customerPhone} onChange={(event) => setCustomerPhone(event.target.value)} placeholder="+233 24 123 4567" /></div></>}</div></>}{APP_DEMO_MODE && <div className="info-note">Demo mode sends no request. A separate “simulate approval” action is available only from the checkout method selector.</div>}</div> : <>
             <div className="form-grid"><div className="field full"><label>Sale total · GHS</label><input value={money(cartTotals.totalMinor)} readOnly /></div></div>
             <div className="payment-methods" style={{ marginTop: 14 }}>
@@ -1276,6 +1354,7 @@ export function PosApp() {
             </> : APP_DEMO_MODE ? <div className="attention-note"><AlertTriangle size={14} /><span><strong>Simulation only.</strong> This button records a labelled demo transaction. No card/MoMo request, webhook or money transfer occurs.</span></div> : <>
               {paymentMethod === 'momo' && <><div className="form-grid"><div className="field"><label>Mobile-money network</label><select value={momoNetwork} onChange={(event) => setMomoNetwork(event.target.value)}><option value="mtn">MTN Mobile Money</option><option value="atl">ATMoney / Airtel Money</option><option value="vod">Telecel Cash</option></select></div><div className="field"><label>Customer phone</label><input inputMode="tel" placeholder="+233 24 123 4567" value={customerPhone} onChange={(event) => setCustomerPhone(event.target.value)} /></div></div><div className="field" style={{ marginTop: 10 }}><label>Customer email · required by Paystack</label><input type="email" placeholder="customer@example.com" value={customerEmail} onChange={(event) => setCustomerEmail(event.target.value)} /></div></>}
               {paymentMethod === 'card' && <><div className="field"><label>Customer email · required by Paystack</label><input type="email" placeholder="customer@example.com" value={customerEmail} onChange={(event) => setCustomerEmail(event.target.value)} /></div><div className="info-note" style={{ marginTop: 10 }}>Card details are collected on Paystack’s hosted authorization page; this POS does not store PAN/CVV.</div></>}
+              <label style={{ display: 'flex', alignItems: 'flex-start', gap: 9, marginTop: 12, fontSize: 12, lineHeight: 1.5 }}><input type="checkbox" checked={paymentConsent} onChange={(event) => setPaymentConsent(event.target.checked)} /><span>The customer has read the <a href={PRIVACY_NOTICE_PATH} target="_blank" rel="noreferrer">privacy notice</a> and agrees to share the email/phone above with Paystack solely to request or verify this payment. This is not marketing consent.</span></label>
               <div className="attention-note"><AlertTriangle size={14} />Digital payments require internet and a configured merchant account. If offline or timed out, the sale remains pending and stock is not decremented until confirmation.</div>
             </>}
           </>}
@@ -1288,16 +1367,17 @@ export function PosApp() {
           <hr className="receipt-divider" /><div className="receipt-line" style={{ justifyContent: 'center', color: '#88938b' }}><span>Thank you for shopping with us.</span></div>
         </div>
         <div className="info-note"><strong>Tax notice:</strong> This is a demo/template receipt, not a statement of GRA E-VAT/CIS certification. Confirm legal receipt content and device/printer compatibility before a live pilot.</div>
-        <div className="form-grid" style={{ marginTop: 14 }}><div className="field full"><label>Email receipt address</label><input type="email" placeholder="customer@example.com" value={receiptEmail} onChange={(event) => setReceiptEmail(event.target.value)} /><span className="field-hint">Managed email requires a configured Resend sender. Demo uses native share/PDF fallback.</span></div></div>
-        <div className="heading-actions print-hidden" style={{ marginTop: 12 }}><button className="btn" onClick={() => window.print()}><Printer size={14} />Browser print / save PDF</button><button className="btn" onClick={() => void downloadReceiptPdf(receiptOrder, receiptRefund ?? undefined).then(() => showToast('PDF downloaded.', 'success')).catch(() => showToast('PDF export failed.', 'error'))}><ArrowDownToLine size={14} />Download PDF</button><button className="btn" onClick={() => void shareReceipt(receiptOrder, receiptRefund ?? undefined).then((result) => showToast(result === 'shared' ? 'Receipt opened in the device share sheet.' : 'PDF downloaded; attach it from your mail app.', 'plain')).catch(() => showToast('Share is not available in this browser.', 'error'))}><ArrowLeftRight size={14} />Share / Mail</button><button className="btn" onClick={() => void emailReceipt()}><Mail size={14} />Email receipt</button></div>
+        <div className="form-grid" style={{ marginTop: 14 }}><div className="field full"><label>Email receipt address</label><input type="email" placeholder="customer@example.com" value={receiptEmail} onChange={(event) => setReceiptEmail(event.target.value)} /><span className="field-hint">Managed email requires a configured Resend sender. Demo uses native share/PDF fallback.</span><label style={{ display: 'flex', alignItems: 'flex-start', gap: 9, marginTop: 9, fontSize: 12, lineHeight: 1.5 }}><input type="checkbox" checked={receiptConsent} onChange={(event) => setReceiptConsent(event.target.checked)} /><span>The customer asked to receive this receipt by email and has been told the address is used only to deliver it. <a href={PRIVACY_NOTICE_PATH} target="_blank" rel="noreferrer">Privacy notice</a>.</span></label></div></div>
+        <div className="heading-actions print-hidden" style={{ marginTop: 12 }}><button className="btn" onClick={() => window.print()}><Printer size={14} />Browser print / save PDF</button><button className="btn" onClick={() => void downloadReceiptPdf(receiptOrder, receiptRefund ?? undefined).then(() => showToast('PDF downloaded.', 'success')).catch(() => showToast('PDF export failed.', 'error'))}><ArrowDownToLine size={14} />Download PDF</button><button className="btn" onClick={() => void shareReceipt(receiptOrder, receiptRefund ?? undefined).then((result) => showToast(result === 'shared' ? 'Receipt opened in the device share sheet.' : 'PDF downloaded; attach it from your mail app.', 'plain')).catch(() => showToast('Share is not available in this browser.', 'error'))}><ArrowLeftRight size={14} />Share / Mail</button><button className="btn" disabled={!receiptConsent || !receiptEmail.trim()} onClick={() => void emailReceipt()}><Mail size={14} />Email receipt</button></div>
         <div className="heading-actions print-hidden" style={{ marginTop: 8 }}><button className="btn small" onClick={() => void printThermal('bluetooth')}><Printer size={12} />ESC/POS Bluetooth</button><button className="btn small" onClick={() => void printThermal('usb')}><Printer size={12} />ESC/POS USB</button></div>
       </Modal>}
 
-      {modal === 'refund' && selectedOrder && <Modal title={`Return · ${selectedOrder.orderNumber}`} description={`Original tender: ${titleCase(selectedOrder.paymentMethod ?? 'unknown')}. Accepted saleable items are restocked. ${selectedOrder.paymentMethod === 'cash' ? 'Cash refund can be recorded offline.' : 'Digital reversal stays pending until provider confirmation.'}`} onClose={() => setModal(null)} wide footer={<><button className="btn" onClick={() => setModal(null)}>Cancel</button><button className="btn primary" disabled={!refundEstimate.amount} onClick={() => void submitRefund()}><RotateCcw size={14} />{selectedOrder.paymentMethod === 'cash' ? 'Record cash refund' : 'Request original-tender reversal'}</button></>}>
+      {modal === 'refund' && selectedOrder && <Modal title={`Return · ${selectedOrder.orderNumber}`} description={`Original tender: ${titleCase(selectedOrder.paymentMethod ?? 'unknown')}. Accepted saleable items are restocked. ${selectedOrder.paymentMethod === 'cash' ? 'Cash refund can be recorded offline.' : 'Digital reversal stays pending until provider confirmation.'}`} onClose={() => setModal(null)} wide footer={<><button className="btn" onClick={() => setModal(null)}>Cancel</button><button className="btn primary" disabled={!refundEstimate.amount || refundOverLimit} onClick={() => void submitRefund()}><RotateCcw size={14} />{selectedOrder.paymentMethod === 'cash' ? 'Record cash refund' : 'Request original-tender reversal'}</button></>}>
         {selectedOrder.paymentMethod !== 'cash' && <div className="attention-note"><AlertTriangle size={14} />The provider may take time to complete a reversal. Do not tell the customer it succeeded until Paystack’s status/webhook confirms it.</div>}
         <div className="table-wrap"><table className="data-table"><thead><tr><th>Sold item</th><th>Return qty</th><th>Remaining</th><th>Restock</th><th>Refund incl. tax</th></tr></thead><tbody>{selectedOrder.items.map((line) => { const max = refundAvailable[line.productId] ?? 0; const qty = refundQty[line.productId] ?? 0; const amount = line.quantity ? Math.round(line.grossMinor * qty / line.quantity) : 0; return <tr key={line.productId}><td><strong>{line.name}</strong><div className="subtle" style={{ marginTop: 3 }}>{line.quantity} sold · tax {line.taxRatePercent.toFixed(2)}%</div></td><td><input style={{ width: 66, minHeight: 32, border: '1px solid var(--line)', borderRadius: 8, padding: '4px 7px' }} type="number" min="0" max={max} step="0.001" value={qty || ''} onChange={(event) => setRefundQty((current) => ({ ...current, [line.productId]: Math.max(0, Math.min(max, Number(event.target.value) || 0)) }))} /></td><td>{max}</td><td><input type="checkbox" checked={refundRestock[line.productId] ?? false} disabled={!qty} onChange={(event) => setRefundRestock((current) => ({ ...current, [line.productId]: event.target.checked }))} aria-label={`Restock ${line.name}`} /></td><td>{money(amount)}</td></tr>})}</tbody></table></div>
         <div className="form-grid" style={{ marginTop: 14 }}><div className="field full"><label>Reason</label><input value={refundReason} onChange={(event) => setRefundReason(event.target.value)} placeholder="Customer return / damaged item" /></div></div>
-        <div className="cash-summary"><div className="cash-stat"><span>Refund total</span><strong>{money(refundEstimate.amount)}</strong></div><div className="cash-stat"><span>Tax reversal</span><strong>{money(refundEstimate.tax)}</strong></div></div>
+        <div className="cash-summary"><div className="cash-stat"><span>Refund total</span><strong>{money(refundEstimate.amount)}</strong></div><div className="cash-stat"><span>Tax reversal</span><strong>{money(refundEstimate.tax)}</strong></div><div className="cash-stat"><span>Per-transaction authorization</span><strong>{employee?.refundLimitMinor === null ? 'No cap' : money(employee?.refundLimitMinor ?? 0)}</strong></div></div>
+        {refundOverLimit && <div className="attention-note"><AlertTriangle size={14} />This return exceeds your configured refund limit. Reduce the quantity or ask the owner to authorize a higher limit.</div>}
         <div className="heading-actions" style={{ marginTop: 10 }}><button className="btn small" onClick={() => setRefundQty(Object.fromEntries(selectedOrder.items.map((line) => [line.productId, refundAvailable[line.productId] ?? 0])))}>Select remaining quantities</button><button className="btn small" onClick={() => setRefundQty(Object.fromEntries(selectedOrder.items.map((line) => [line.productId, 0])))}>Clear</button></div>
       </Modal>}
 
@@ -1313,8 +1393,8 @@ export function PosApp() {
         <form id="shift-form" className="form-grid" onSubmit={saveShift}><div className="field full"><label>{shiftFormMode === 'open' ? 'Opening float · GHS' : 'Counted cash · GHS'}</label><input required inputMode="decimal" value={shiftAmount} onChange={(event) => setShiftAmount(event.target.value)} /></div>{shiftFormMode === 'close' && activeShift && <><div className="field full"><label>Expected cash</label><input readOnly value={money(activeShift.expectedCashMinor)} /></div><div className="field full"><label>Variance reason (required if not zero)</label><textarea value={shiftReason} onChange={(event) => setShiftReason(event.target.value)} placeholder="Explain cash over/short" /></div></>}</form>
       </Modal>}
 
-      {modal === 'employee' && employeeForm && <Modal title={employeeForm.id ? 'Edit employee role' : 'Add employee'} description="Cashier, manager and owner permissions are enforced in the app. Cloud login invites are a separate setup action." onClose={() => setModal(null)} footer={<><button className="btn" onClick={() => setModal(null)}>Cancel</button><button form="employee-form" type="submit" className="btn primary"><Check size={14} />Save profile</button></>}>
-        <form id="employee-form" className="form-grid" onSubmit={saveEmployeeForm}><div className="field full"><label>Display name</label><input required value={employeeForm.displayName} onChange={(event) => setEmployeeForm({ ...employeeForm, displayName: event.target.value })} /></div><div className="field full"><label>Role</label><select value={employeeForm.role} onChange={(event) => setEmployeeForm({ ...employeeForm, role: event.target.value as UserRole })}><option value="cashier">Cashier · checkout, receipts, own shift</option><option value="manager">Manager · products, stock, refunds, reports</option><option value="owner" disabled={employee.role !== 'owner'}>Owner · all operations and setup</option></select></div></form>
+      {modal === 'employee' && employeeForm && <Modal title={employeeForm.id ? 'Edit employee permissions' : 'Add employee'} description="Refund approval is limited by a per-transaction authorization ceiling. Cloud login invites are a separate setup action." onClose={() => setModal(null)} footer={<><button className="btn" onClick={() => setModal(null)}>Cancel</button><button form="employee-form" type="submit" className="btn primary"><Check size={14} />Save profile</button></>}>
+        <form id="employee-form" className="form-grid" onSubmit={saveEmployeeForm}><div className="field full"><label>Display name</label><input required value={employeeForm.displayName} onChange={(event) => setEmployeeForm({ ...employeeForm, displayName: event.target.value })} /></div><div className="field full"><label>Role</label><select value={employeeForm.role} onChange={(event) => setEmployeeForm({ ...employeeForm, role: event.target.value as UserRole })}><option value="cashier">Cashier · checkout, receipts, own shift</option><option value="manager">Manager · products, stock and reports</option><option value="owner" disabled={employee?.role !== 'owner'}>Owner · all operations and setup</option></select></div><div className="field full"><label>Refund limit per transaction · GHS</label><input type="number" min="0" step="0.01" placeholder={employeeForm.role === 'owner' ? 'Leave blank for no cap' : '0.00'} value={employeeForm.refundLimit} disabled={employee?.role !== 'owner'} onChange={(event) => setEmployeeForm({ ...employeeForm, refundLimit: event.target.value })} /><span className="field-hint">0 disables refunds. A blank, uncapped limit is allowed only for an owner profile. Only an owner can change limits; managers keep the current value.</span></div></form>
       </Modal>}
 
       {modal === 'tax' && taxForm && <Modal title={taxForm.id ? 'Edit tax profile' : 'Add tax profile'} description="Tax treatment and each component are snapshotted on every new sale line." onClose={() => setModal(null)} wide footer={<><button className="btn" onClick={() => setModal(null)}>Cancel</button><button form="tax-form" type="submit" className="btn primary"><ShieldCheck size={14} />Save tax profile</button></>}>

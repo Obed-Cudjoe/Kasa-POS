@@ -1,17 +1,21 @@
 import { authorizeRequest, routeError } from '@/lib/cloud'
+import { isWithinRefundLimit } from '@/lib/permissions'
 import { paystackFetch } from '@/lib/paystack'
 
 export const dynamic = 'force-dynamic'
 
 export async function POST(request: Request) {
   try {
-    const actor = await authorizeRequest(request, ['owner', 'manager'])
+    const actor = await authorizeRequest(request)
     const body = await request.json() as { refundId?: string }
     if (!body.refundId) return Response.json({ error: 'Refund ID is required.' }, { status: 400 })
     const { data: refund, error: refundError } = await actor.admin.from('refunds')
-      .select('id,store_id,order_id,payment_id,status,reason,amount,currency_code,provider_refund_id')
+      .select('id,store_id,order_id,payment_id,requested_by,status,reason,amount,currency_code,provider_refund_id')
       .eq('store_id', actor.storeId).eq('id', body.refundId).maybeSingle()
     if (refundError || !refund) return Response.json({ error: 'Refund is not synced to the store cloud yet. Keep it pending and retry after sync.' }, { status: 409 })
+    if (actor.role === 'cashier' && refund.requested_by !== actor.employeeId) {
+      return Response.json({ error: 'Cashiers may submit only refunds attributed to their own profile.' }, { status: 403 })
+    }
     if (['processed', 'processing'].includes(refund.status) && refund.provider_refund_id) {
       return Response.json({ ok: true, status: refund.status, providerRefundId: refund.provider_refund_id, duplicate: true })
     }
@@ -19,6 +23,9 @@ export async function POST(request: Request) {
       return Response.json({ error: 'This refund may already have reached Paystack. Reconcile its status in the provider dashboard; do not submit it again.' }, { status: 409 })
     }
     if (refund.status !== 'pending') return Response.json({ error: 'Only a pending refund request can be submitted. For a failed attempt, create a new request after reconciliation.' }, { status: 409 })
+    if (!isWithinRefundLimit(Number(refund.amount), actor.refundLimitMinor)) {
+      return Response.json({ error: 'Refund exceeds this employee’s configured authorization limit.' }, { status: 403 })
+    }
     const { data: payment, error: paymentError } = await actor.admin.from('payments')
       .select('id,method,provider,provider_reference,provider_transaction_id,amount,currency_code,status')
       .eq('store_id', actor.storeId).eq('id', refund.payment_id).maybeSingle()

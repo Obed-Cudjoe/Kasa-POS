@@ -178,6 +178,7 @@ export interface Employee {
   authUserId?: string
   displayName: string
   role: UserRole
+  refundLimitMinor?: number | null
   status: 'active' | 'disabled'
   createdAt: string
 }

@@ -1,0 +1,2 @@
+# Used by Wrangler's local Worker preview. Do not add production secrets here.
+NEXTJS_ENV=development
