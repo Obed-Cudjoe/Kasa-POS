@@ -2,7 +2,7 @@
 
 A tablet-first POS MVP starter for a small independent retailer. It uses Next.js App Router, TypeScript, Supabase PostgreSQL/Auth, Dexie/IndexedDB, a PWA service worker and Next.js Route Handlers. The UI is designed for tablet landscape, with a collapsed phone layout.
 
-> **Important delivery boundary:** this workspace contains a runnable local project, Cloudflare Workers/OpenNext configuration, and starter migrations. It has **not** been published to GitHub, deployed to Cloudflare Workers, connected to a live Supabase project, or tested with a real payment merchant account. No Cloudflare account access, production credentials, domain configuration, or merchant onboarding were supplied. Demo payment buttons are simulations only. Do not use demo tax figures or receipts for live trade.
+> **Important delivery boundary:** this project is in the public `Obed-Cudjoe/Kasa-POS` GitHub repository and has Cloudflare Workers/OpenNext configuration. The Cloudflare hostname `https://kasa-pos.cudjoe-obed-gh.workers.dev` currently serves a generic `Hello world` Worker—not this POS app—and the latest Workers Build check failed. The Kasa app is not confirmed deployed, Supabase is not confirmed connected, and no real payment merchant account has been tested. Demo payment buttons are simulations only. Do not use demo tax figures or receipts for live trade.
 
 ## What works in the local demo
 
@@ -25,7 +25,7 @@ A tablet-first POS MVP starter for a small independent retailer. It uses Next.js
 
 ## Not included / not certified
 
-- No live PSP charge, webhook, refund, Cloudflare Worker deployment, Supabase migration execution, GitHub publication or merchant settlement has been verified from this workspace.
+- No live PSP charge, webhook, refund, Kasa POS Worker deployment (the current hostname serves only `Hello world`), Supabase migration execution or merchant settlement has been verified from this workspace. The source repository is already public on GitHub.
 - Paystack is the implemented Ghana adapter. Flutterwave is not wired in this project; use an adapter for it if merchant onboarding/market coverage requires it. Provider channel support must be checked against the specific merchant account.
 - Demo “Confirm” records are intentionally stored as `demo_simulated`; they are not provider-confirmed sales.
 - Demo Ghana tax components are illustrative and **unverified**. They are not legal advice and do not establish VAT registration, correct effective rates, GRA E-VAT/CIS certification or a certified fiscal receipt.
@@ -207,7 +207,7 @@ Leave the preview process running and open Wrangler's local URL (this project's 
 
    `NEXT_PUBLIC_*` values are bundled during `next build`; rebuild/redeploy when changing them. Do not commit this file. If using Cloudflare Workers Builds instead of local deployment, add the same build values to that build environment.
 
-3. In the Cloudflare dashboard, open **Workers & Pages → `kasa-pos-pwa` → Settings → Variables and Secrets**. Add runtime variables for `NEXT_PUBLIC_DEMO_MODE=false`, `NEXT_PUBLIC_APP_URL`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `POS_STORE_ID`. Add server-only secrets using the Secret type: `SUPABASE_SERVICE_ROLE_KEY`; add `PAYSTACK_SECRET_KEY` only when using an onboarded merchant's test/live account, and optionally `RESEND_API_KEY`. Optional runtime values are `PAYSTACK_DEFAULT_EMAIL`, `PAYMENT_RECEIPT_EMAIL`, and `RECEIPT_FROM_EMAIL`. Never use `NEXT_PUBLIC_` for a server-only secret. Deploy preserves dashboard variables with Wrangler's `--keep-vars` option.
+3. In the Cloudflare dashboard, open **Workers & Pages → `kasa-pos` → Settings → Variables and Secrets**. Add runtime variables for `NEXT_PUBLIC_DEMO_MODE=false`, `NEXT_PUBLIC_APP_URL`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `POS_STORE_ID`. Add server-only secrets using the Secret type: `SUPABASE_SERVICE_ROLE_KEY`; add `PAYSTACK_SECRET_KEY` only when using an onboarded merchant's test/live account, and optionally `RESEND_API_KEY`. Optional runtime values are `PAYSTACK_DEFAULT_EMAIL`, `PAYMENT_RECEIPT_EMAIL`, and `RECEIPT_FROM_EMAIL`. Never use `NEXT_PUBLIC_` for a server-only secret. Deploy preserves dashboard variables with Wrangler's `--keep-vars` option.
 
 4. Deploy first to the generated `workers.dev` address:
 
@@ -216,15 +216,15 @@ Leave the preview process running and open Wrangler's local URL (this project's 
    npm run cf:deploy
    ```
 
-   The account-specific URL is printed by Wrangler/dashboard; it is not known from this workspace. Verify `/`, `/offline`, `/manifest.webmanifest`, `/sw.js`, and `/api/health`. Health should report `mode: "configured"` and `cloudConfigured: true` only after the required Supabase variables are correct. Use test keys and a non-production store for all payment checks.
+   The current target URL is `https://kasa-pos.cudjoe-obed-gh.workers.dev`. Verify `/`, `/offline`, `/manifest.webmanifest`, `/sw.js`, and `/api/health`; then run `npm run cf:check -- https://kasa-pos.cudjoe-obed-gh.workers.dev`. Health should report `mode: "configured"` and `cloudConfigured: true` only after the required Supabase variables are correct. The health route checks configuration flags only; verify actual database read/sync with a staging account and synthetic data. Use test keys and a non-production store for all payment checks.
 
-5. Attach the custom hostname only after the Worker works at `workers.dev`. The domain must be an **active Cloudflare DNS zone**. If the domain is registered elsewhere, its registration can stay there; point its nameservers to Cloudflare if necessary to activate the zone. In **Workers & Pages → `kasa-pos-pwa` → Settings → Domains & Routes → Add → Custom Domain**, enter the chosen hostname (for example `pos.example.com`). Cloudflare provisions the DNS record and certificate. See [Custom Domains](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/). No custom domain has been added by this project setup.
+5. Attach the custom hostname only after the Worker works at `workers.dev`. The domain must be an **active Cloudflare DNS zone**. If the domain is registered elsewhere, its registration can stay there; point its nameservers to Cloudflare if necessary to activate the zone. In **Workers & Pages → `kasa-pos` → Settings → Domains & Routes → Add → Custom Domain**, enter the chosen hostname (for example `pos.example.com`). Cloudflare provisions the DNS record and certificate. See [Custom Domains](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/). No custom domain has been added by this project setup.
 
 6. Set `NEXT_PUBLIC_APP_URL` to the final HTTPS hostname and redeploy. Update Supabase Auth redirect/allowed URLs and Paystack's webhook URL to `https://YOUR_FINAL_HOST/api/webhooks/paystack`. Confirm HTTPS, sign-in, role boundaries, sync, refunds, webhook verification, offline replay, and the exact target devices/printers before a pilot.
 
 Never accept live payments until merchant onboarding, webhook delivery, refund behavior, tax treatment, receipt compliance, hardware tests, backup/restore and recovery procedures are verified. Keep all secrets in Cloudflare/Supabase server-side settings; never paste them into client code, Git, issue trackers or screenshots.
 
-No live GitHub repository, Cloudflare deployment or custom-domain URL is claimed. The project folder is the current source of truth; regenerate the downloadable archive after any later edits.
+The GitHub repository is public. The supplied Cloudflare hostname currently serves a generic `Hello world` Worker, not Kasa POS; do not treat it as a POS deployment. The project folder is the current source of truth; regenerate the downloadable archive after any later edits.
 
 ## Release checklist
 

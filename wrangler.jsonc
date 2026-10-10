@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "kasa-pos-pwa",
+  "name": "kasa-pos",
   "main": ".open-next/worker.js",
   "compatibility_date": "2026-10-10",
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
@@ -12,7 +12,7 @@
   "services": [
     {
       "binding": "WORKER_SELF_REFERENCE",
-      "service": "kasa-pos-pwa"
+      "service": "kasa-pos"
     }
   ]
 }
