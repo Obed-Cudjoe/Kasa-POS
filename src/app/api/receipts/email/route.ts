@@ -2,6 +2,7 @@ import { PDFDocument, StandardFonts, rgb } from 'pdf-lib'
 import { Resend } from 'resend'
 import { authorizeRequest, routeError } from '@/lib/cloud'
 import { formatMoney } from '@/lib/money'
+import { PRIVACY_NOTICE_VERSION } from '@/lib/privacy'
 
 export const dynamic = 'force-dynamic'
 
@@ -66,9 +67,16 @@ export async function POST(request: Request) {
       return Response.json({ error: 'Enter a valid email address and receipt ID.' }, { status: 400 })
     }
     const { data: order, error: orderError } = await actor.admin.from('orders')
-      .select('id,store_id,order_number,status,currency_code,subtotal_amount,tax_amount,total_amount,created_at')
+      .select('id,store_id,employee_id,order_number,status,currency_code,subtotal_amount,tax_amount,total_amount,created_at')
       .eq('store_id', actor.storeId).eq('id', body.orderId).maybeSingle()
     if (orderError || !order) return Response.json({ error: 'Receipt was not found in the signed-in store.' }, { status: 404 })
+    if (actor.role === 'cashier' && order.employee_id !== actor.employeeId) {
+      return Response.json({ error: 'Cashiers may email receipts only for their own sales.' }, { status: 403 })
+    }
+    const { data: consent, error: consentError } = await actor.admin.from('privacy_consent_events').select('id')
+      .eq('store_id', actor.storeId).eq('order_id', order.id)
+      .eq('purpose_code', 'receipt_email').eq('policy_version', PRIVACY_NOTICE_VERSION).maybeSingle()
+    if (consentError || !consent) return Response.json({ error: 'Customer consent for receipt email must be recorded before sending.' }, { status: 403 })
     const { data: items, error: itemError } = await actor.admin.from('order_items')
       .select('id,product_name_snapshot,quantity,currency_code,line_total,tax_rate,tax_amount')
       .eq('store_id', actor.storeId).eq('order_id', order.id).order('created_at')

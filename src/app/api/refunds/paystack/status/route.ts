@@ -18,13 +18,16 @@ async function updateRefundProjection(admin: ReturnType<typeof import('@/lib/clo
 
 export async function POST(request: Request) {
   try {
-    const actor = await authorizeRequest(request, ['owner', 'manager'])
+    const actor = await authorizeRequest(request)
     const body = await request.json() as { refundId?: string }
     if (!body.refundId) return Response.json({ error: 'Refund ID is required.' }, { status: 400 })
     const { data: refund, error } = await actor.admin.from('refunds')
-      .select('id,store_id,order_id,payment_id,amount,currency_code,provider_refund_id,status')
+      .select('id,store_id,order_id,payment_id,requested_by,amount,currency_code,provider_refund_id,status')
       .eq('store_id', actor.storeId).eq('id', body.refundId).maybeSingle()
     if (error || !refund) return Response.json({ error: 'Refund record was not found in the store cloud.' }, { status: 404 })
+    if (actor.role === 'cashier' && refund.requested_by !== actor.employeeId) {
+      return Response.json({ error: 'Cashiers may check only refunds attributed to their own profile.' }, { status: 403 })
+    }
     if (!refund.provider_refund_id) return Response.json({ error: 'No Paystack refund ID has been saved yet. Sync the refund and submit the original-tender reversal first.' }, { status: 409 })
 
     const response = await paystackFetch('/refund?perPage=100&page=1', { method: 'GET' })

@@ -108,6 +108,7 @@ export async function pullCloud() {
   const employees: Employee[] = employeeRows.map((row) => ({
     id: text(row.id), storeId: text(row.store_id), authUserId: text(row.auth_user_id) || undefined,
     displayName: text(row.display_name), role: text(row.role, 'cashier') as Employee['role'],
+    refundLimitMinor: row.refund_limit_minor == null ? null : number(row.refund_limit_minor),
     status: text(row.status) === 'disabled' ? 'disabled' : 'active', createdAt: iso(row.created_at),
   }))
   const employeeNames = new Map(employees.map((employee) => [employee.id, employee.displayName]))

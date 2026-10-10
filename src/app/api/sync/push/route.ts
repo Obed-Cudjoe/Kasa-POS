@@ -1,9 +1,10 @@
 import { authorizeRequest, routeError } from '@/lib/cloud'
+import { isWithinRefundLimit } from '@/lib/permissions'
 import type { SyncEventType, UserRole } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
 
-const privilegedEvents = new Set<SyncEventType>(['refund', 'product', 'tax', 'employee'])
+const privilegedEvents = new Set<SyncEventType>(['product', 'tax', 'employee'])
 
 export async function POST(request: Request) {
   try {
@@ -32,10 +33,19 @@ export async function POST(request: Request) {
         continue
       }
       const { data: employee, error: employeeError } = await actor.admin
-        .from('employees').select('id,role').eq('store_id', actor.storeId).eq('id', employeeId).eq('status', 'active').maybeSingle()
+        .from('employees').select('id,role,refund_limit_minor').eq('store_id', actor.storeId).eq('id', employeeId).eq('status', 'active').maybeSingle()
       if (employeeError || !employee) {
         results.push({ eventId, status: 'rejected', error: 'The event employee is not active in this store.' })
         continue
+      }
+      if (eventType === 'refund') {
+        const refund = (event.payload as { refund?: { amountMinor?: unknown } } | undefined)?.refund
+        const amountMinor = Number(refund?.amountMinor)
+        const limitMinor = employee.refund_limit_minor === null ? null : Number(employee.refund_limit_minor ?? 0)
+        if (!isWithinRefundLimit(amountMinor, limitMinor)) {
+          results.push({ eventId, status: 'rejected', error: 'Refund exceeds the event employee’s configured authorization limit.' })
+          continue
+        }
       }
       if (actor.role === 'cashier' && employeeId !== actor.employeeId) {
         results.push({ eventId, status: 'rejected', error: 'Cashiers may only sync changes attributed to their own profile.' })

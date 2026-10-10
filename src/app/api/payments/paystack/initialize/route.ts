@@ -1,5 +1,6 @@
 import { authorizeRequest, routeError } from '@/lib/cloud'
 import { paystackFetch, randomProviderReference } from '@/lib/paystack'
+import { PRIVACY_NOTICE_VERSION } from '@/lib/privacy'
 
 export const dynamic = 'force-dynamic'
 
@@ -18,13 +19,20 @@ export async function POST(request: Request) {
     if (!['card', 'momo'].includes(payment.method)) return Response.json({ error: 'Only card or mobile-money payments can be initialized here.' }, { status: 400 })
     if (!['pending', 'initiated', 'failed'].includes(payment.status)) return Response.json({ error: 'This payment is not in a retryable state.' }, { status: 409 })
     const { data: order, error: orderError } = await actor.admin.from('orders')
-      .select('id,status,total_amount,currency_code,order_number').eq('store_id', actor.storeId).eq('id', body.orderId).maybeSingle()
+      .select('id,employee_id,status,total_amount,currency_code,order_number').eq('store_id', actor.storeId).eq('id', body.orderId).maybeSingle()
     if (orderError || !order || order.status !== 'pending_payment' || Number(order.total_amount) !== Number(payment.amount)) {
       return Response.json({ error: 'Order totals do not match the pending payment. No charge was sent.' }, { status: 409 })
+    }
+    if (actor.role === 'cashier' && order.employee_id !== actor.employeeId) {
+      return Response.json({ error: 'Cashiers may request payment only for their own sales.' }, { status: 403 })
     }
     if (payment.status !== 'failed' && payment.provider_reference) {
       return Response.json({ ok: true, method: payment.method, reference: payment.provider_reference, providerStatus: payment.status, message: 'A provider request already uses this reference or may still be processing. No second charge request was sent; check provider status first.' }, { headers: { 'cache-control': 'no-store' } })
     }
+    const { data: consent, error: consentError } = await actor.admin.from('privacy_consent_events').select('id')
+      .eq('store_id', actor.storeId).eq('order_id', body.orderId)
+      .eq('purpose_code', 'digital_payment_contact').eq('policy_version', PRIVACY_NOTICE_VERSION).maybeSingle()
+    if (consentError || !consent) return Response.json({ error: 'Customer consent for payment-contact processing must be recorded before a provider request.' }, { status: 403 })
     const email = body.email?.trim() || process.env.PAYMENT_RECEIPT_EMAIL || process.env.PAYSTACK_DEFAULT_EMAIL
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return Response.json({ error: 'A valid customer email is required by the Paystack charge request.' }, { status: 400 })
     if (payment.method === 'momo' && (!body.phone || !/^\+?[0-9]{9,15}$/.test(body.phone.replace(/[\s-]/g, '')) || !body.network || !NETWORKS.has(body.network))) {

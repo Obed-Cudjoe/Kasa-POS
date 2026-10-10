@@ -26,6 +26,7 @@ export interface RequestActor {
   storeId: string
   displayName: string
   role: UserRole
+  refundLimitMinor: number | null
   admin: SupabaseClient
 }
 
@@ -40,7 +41,7 @@ export async function authorizeRequest(request: Request, permittedRoles?: UserRo
   const { data: { user }, error: authError } = await authClient.auth.getUser(token)
   if (authError || !user) throw new Error('Your session has expired. Sign in again.')
   const admin = createAdminClient()
-  let query = admin.from('employees').select('id, store_id, display_name, role, status, auth_user_id').eq('auth_user_id', user.id).eq('status', 'active')
+  let query = admin.from('employees').select('id, store_id, display_name, role, status, auth_user_id, refund_limit_minor').eq('auth_user_id', user.id).eq('status', 'active')
   const configuredStoreId = process.env.POS_STORE_ID
   if (configuredStoreId) query = query.eq('store_id', configuredStoreId)
   const { data: employee, error: employeeError } = await query.maybeSingle()
@@ -48,7 +49,8 @@ export async function authorizeRequest(request: Request, permittedRoles?: UserRo
   if (permittedRoles && !permittedRoles.includes(employee.role as UserRole)) throw new Error('Your role does not have permission to perform this action.')
   return {
     userId: user.id, employeeId: employee.id, storeId: employee.store_id,
-    displayName: employee.display_name, role: employee.role as UserRole, admin,
+    displayName: employee.display_name, role: employee.role as UserRole,
+    refundLimitMinor: employee.refund_limit_minor === null ? null : Number(employee.refund_limit_minor ?? 0), admin,
   }
 }
 

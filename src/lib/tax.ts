@@ -56,11 +56,20 @@ function calculateInclusive(grossMinor: number, components: TaxComponent[]) {
 }
 
 export function calculateLine(product: Product, quantity: number, taxCategory: TaxCategory): CalculatedLine {
-  const safeQty = Math.max(0, quantity)
-  const enteredMinor = Math.round(product.priceMinor * safeQty)
+  if (!Number.isFinite(quantity) || quantity <= 0) throw new Error('Quantity must be a positive finite number.')
+  if (!Number.isSafeInteger(product.priceMinor) || product.priceMinor < 0) throw new Error('Unit price must be a non-negative safe integer in minor units.')
+  const extendedMinor = product.priceMinor * quantity
+  if (!Number.isFinite(extendedMinor) || !Number.isSafeInteger(Math.round(extendedMinor))) throw new Error('Extended price exceeds the safe minor-unit range.')
+  const enteredMinor = Math.round(extendedMinor)
   let components = taxCategory.treatment === 'standard_rated' ? taxCategory.components : []
-  if (product.taxRateOverride !== null && product.taxRateOverride !== undefined) {
+  if (taxCategory.treatment === 'standard_rated' && product.taxRateOverride !== null && product.taxRateOverride !== undefined) {
+    if (!Number.isFinite(product.taxRateOverride) || product.taxRateOverride < 0 || product.taxRateOverride > 100) {
+      throw new Error('Product tax override must be between 0 and 100 percent.')
+    }
     components = [{ id: `override-${product.id}`, code: 'PRODUCT', name: 'Product tax', ratePercent: product.taxRateOverride, method: 'same_base', order: 1 }]
+  }
+  if (components.some((component) => !Number.isFinite(component.ratePercent) || component.ratePercent < 0 || component.ratePercent > 100)) {
+    throw new Error('Tax component rates must be between 0 and 100 percent.')
   }
 
   const taxCalculation = product.priceMode === 'inclusive'
@@ -74,7 +83,7 @@ export function calculateLine(product: Product, quantity: number, taxCategory: T
     productId: product.id,
     name: product.name,
     sku: product.sku,
-    quantity: safeQty,
+    quantity,
     unitPriceMinor: product.priceMinor,
     priceMode: product.priceMode,
     categoryId: product.categoryId,

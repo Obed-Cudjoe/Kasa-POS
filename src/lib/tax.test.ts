@@ -63,6 +63,33 @@ describe('transaction-time tax calculation', () => {
     expect(line.taxBreakdown).toHaveLength(1)
   })
 
+  it.each(['zero_rated', 'exempt', 'out_of_scope'] as const)('does not let a product override convert %s goods into taxable goods', (treatment) => {
+    const line = calculateLine(
+      product({ taxRateOverride: 20 }), 1,
+      taxProfile({ treatment, components: [] }),
+    )
+    expect(line.taxMinor).toBe(0)
+    expect(line.grossMinor).toBe(12_000)
+    expect(line.taxBreakdown).toEqual([])
+  })
+
+  it('rejects invalid quantity, price, and configured tax rates before calculating money', () => {
+    expect(() => calculateLine(product(), 0, taxProfile())).toThrow(/quantity/i)
+    expect(() => calculateLine(product(), Number.NaN, taxProfile())).toThrow(/quantity/i)
+    expect(() => calculateLine(product({ priceMinor: -1 }), 1, taxProfile())).toThrow(/unit price/i)
+    expect(() => calculateLine(product({ taxRateOverride: 100.01 }), 1, taxProfile())).toThrow(/override/i)
+    expect(() => calculateLine(product(), 1, taxProfile({ components: [{ id: 'bad', code: 'BAD', name: 'Bad', ratePercent: Number.NaN, method: 'same_base', order: 1 }] }))).toThrow(/component rates/i)
+  })
+
+  it('rounds minor units once and preserves gross = base + tax for small inclusive prices', () => {
+    for (const priceMinor of [1, 2, 3, 99, 101, 999, 10_001]) {
+      const line = calculateLine(product({ priceMinor }), 1, taxProfile())
+      expect(line.grossMinor).toBe(priceMinor)
+      expect(line.taxableBaseMinor + line.taxMinor).toBe(priceMinor)
+      expect(line.taxBreakdown.reduce((sum, component) => sum + component.taxMinor, 0)).toBe(line.taxMinor)
+    }
+  })
+
   it('scales a line by quantity and reconciles the cart totals', () => {
     const one = calculateLine(product({ priceMinor: 1_200 }), 2, taxProfile())
     const two = calculateLine(product({ id: 'product-2', priceMinor: 600, taxCategoryId: 'zero' }), 3, taxProfile({ id: 'zero', treatment: 'zero_rated', components: [] }))
