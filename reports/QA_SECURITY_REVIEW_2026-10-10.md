@@ -1,5 +1,7 @@
 # Kasa POS MVP — QA and security review
 
+> **Historical snapshot, not a current release attestation.** This review predates the migration from Supabase to Cloudflare D1 and the barcode/receipt-branding work. Its test counts and findings describe the earlier code state only; follow the current deployment guide and rerun the D1/Workers staging plan before any live use.
+
 **Review date:** 2026-10-10 (Accra/Atlantic-Reykjavik local date)
 **Build:** Next.js 16.3.8 · OpenNext Cloudflare 1.20.10
 **Review type:** Source review, local synthetic-data tests, production-build checks and local Cloudflare Worker HTTP smoke test.

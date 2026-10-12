@@ -1,7 +1,8 @@
-import { createHmac, timingSafeEqual } from 'node:crypto'
+import { getWorkerEnv } from './d1'
 
 export async function paystackFetch(path: string, init: RequestInit = {}) {
-  const secret = process.env.PAYSTACK_SECRET_KEY
+  const env = await getWorkerEnv()
+  const secret = env.PAYSTACK_SECRET_KEY
   if (!secret) throw new Error('Paystack is not configured for this deployment.')
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), 12_000)
@@ -27,14 +28,17 @@ export async function paystackFetch(path: string, init: RequestInit = {}) {
   }
 }
 
-export function verifyPaystackSignature(rawBody: string, signature: string | null) {
-  const secret = process.env.PAYSTACK_SECRET_KEY
-  if (!secret || !signature) return false
-  const digest = createHmac('sha512', secret).update(rawBody).digest('hex')
-  const expected = Buffer.from(digest, 'hex')
-  let received: Buffer
-  try { received = Buffer.from(signature, 'hex') } catch { return false }
-  return expected.length === received.length && timingSafeEqual(expected, received)
+export async function verifyPaystackSignature(rawBody: string, signature: string | null) {
+  if (!signature || !/^[0-9a-f]{128}$/i.test(signature)) return false
+  const env = await getWorkerEnv()
+  const secret = env.PAYSTACK_SECRET_KEY
+  if (!secret) return false
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-512' }, false, ['sign'])
+  const digest = new Uint8Array(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(rawBody)))
+  const expected = Array.from(digest, (byte) => byte.toString(16).padStart(2, '0')).join('')
+  let difference = expected.length ^ signature.length
+  for (let i = 0; i < expected.length; i += 1) difference |= expected.charCodeAt(i) ^ signature.toLowerCase().charCodeAt(i)
+  return difference === 0
 }
 
 export function randomProviderReference(prefix = 'KASA') {

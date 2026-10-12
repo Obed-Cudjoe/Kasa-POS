@@ -1,11 +1,9 @@
 import 'fake-indexeddb/auto'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('./supabase-browser', () => ({ getAccessToken: vi.fn(async () => 'synthetic-test-token') }))
-
 import { db } from './local-db'
 import { DEMO_DEVICE_ID, DEMO_EMPLOYEES, DEMO_PRODUCTS, DEMO_STORE_ID, DEMO_TAX_CATEGORIES } from './demo-seed'
-import { closeShift, completePaidSale, createPendingDigitalOrder, createRefund, markDigitalPaymentConfirmed, newId, openShift } from './pos-ops'
+import { addNewProduct, closeShift, completePaidSale, createPendingDigitalOrder, createRefund, markDigitalPaymentConfirmed, newId, openShift } from './pos-ops'
 import { pushOutbox } from './sync-client'
 import { calculateLine, summarizeLines } from './tax'
 import type { Employee, Product } from './types'
@@ -62,6 +60,24 @@ afterEach(() => {
 })
 
 describe('local POS simulation', () => {
+  it('saves scan barcodes and rejects duplicate codes within the local catalogue', async () => {
+    const productInput = {
+      name: 'Synthetic barcode product', sku: '', barcode: '0000123456789', categoryName: 'Test goods',
+      taxCategory: DEMO_TAX_CATEGORIES[0]!, priceMinor: 1250, priceMode: 'inclusive' as const,
+      stock: 0, employee: manager,
+    }
+    const product = await addNewProduct(productInput)
+    expect(product.barcode).toBe('0000123456789')
+    expect(product.sku).toBe('')
+    expect(await db.products.get(product.id)).toMatchObject({ barcode: '0000123456789', active: true })
+    await expect(addNewProduct({ ...productInput, name: 'Duplicate barcode', barcode: '0000123456789' }))
+      .rejects.toThrow('already assigned')
+    const alphaProduct = await addNewProduct({ ...productInput, name: 'Synthetic alpha-code product', barcode: 'AbC-01' })
+    expect(alphaProduct.barcode).toBe('AbC-01')
+    await expect(addNewProduct({ ...productInput, name: 'Case-insensitive duplicate', barcode: 'abc-01' }))
+      .rejects.toThrow('already assigned')
+  })
+
   it('records 50 labelled synthetic sales across cash, card and mobile money, with mixed tax profiles', async () => {
     const modes = ['cash', 'card', 'momo'] as const
     const productIndexes = [0, 5, 15, 19]

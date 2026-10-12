@@ -5,6 +5,18 @@
   "compatibility_date": "2026-10-10",
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
   "workers_dev": true,
+  "limits": { "cpu_ms": 1000 },
+  "vars": {
+    "PUBLIC_APP_URL": "https://kasa-pos.cudjoe-obed-gh.workers.dev"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "kasa-pos-staging",
+      "database_id": "209531ff-5861-49f1-aa4e-e696117ab2a7",
+      "migrations_dir": "migrations"
+    }
+  ],
   "assets": {
     "directory": ".open-next/assets",
     "binding": "ASSETS"

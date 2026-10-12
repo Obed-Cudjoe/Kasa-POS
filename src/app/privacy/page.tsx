@@ -29,24 +29,24 @@ export default function PrivacyPage() {
       <section style={sectionStyle}>
         <h2>What may be used, and why?</h2>
         <ul>
-          <li><strong>Payment contact:</strong> if a customer agrees, the cashier may send the customer’s email address (and for mobile money, phone number and selected network) to the configured payment provider to initiate or verify that specific payment. Contact details are not written into the POS order by this application.</li>
+          <li><strong>Payment contact:</strong> checkout is cash-only in this configuration. The POS does not send customer email addresses, phone numbers or network details to a payment gateway. If a gateway is enabled in the future, this notice and consent flow must be reviewed first.</li>
           <li><strong>Receipt email:</strong> if the customer asks for it, the entered email address is sent to the configured receipt-email service with the receipt attachment. It is not saved in the local POS order by this application.</li>
           <li><strong>Sales and tax records:</strong> item, amount, tax, tender status, store/device identifiers and the cashier’s staff identity are used to operate the till, reconcile payment, manage stock, prevent duplicate refunds and meet applicable accounting/tax duties.</li>
-          <li><strong>Consent audit:</strong> when cloud service is configured and its migration is installed, the system records the order reference, purpose, notice version, time and staff member. It does not record the customer’s email address or phone number in this audit entry.</li>
+          <li><strong>Consent audit:</strong> when the Cloudflare D1 service is configured, the system records the order reference, purpose, notice version, time and staff member. It does not record the customer’s email address or phone number in this audit entry.</li>
         </ul>
         <p>Marketing is a separate purpose. Payment or receipt consent is not marketing consent; this POS template does not request marketing opt-in during checkout.</p>
       </section>
 
       <section style={sectionStyle}>
         <h2>Payments and storage</h2>
-        <p>Card details should be entered only on the payment provider’s hosted page. This POS is designed not to collect or store full card numbers, CVV/CVC or PINs. Do not type payment credentials into POS fields, notes, or support messages. Mobile-money authentication is completed with the provider/network, not by storing a PIN in the POS.</p>
-        <p>Business and staff data may be held in the browser’s IndexedDB for offline operation and, when configured, in the store’s Supabase database. Browser-local data is <strong>not application-encrypted at rest</strong> in this version. Use a dedicated, OS-encrypted device with a strong screen lock, restrict staff access, and remove local data securely before reassignment. Do not use a shared/public device for live sales.</p>
-        <p>Supabase, payment, and email-provider settings and contractual terms must be reviewed by the store owner. This notice does not promise that a provider, account, backup, or device is configured correctly.</p>
+        <p>Cash-only checkout is enabled; no card or mobile-money gateway request is made. The POS does not collect or store full card numbers, CVV/CVC or payment PINs. If a gateway is added later, use its hosted/tokenized payment flow and update this notice before collecting any related contact data.</p>
+        <p>Business and staff data may be held in the browser’s IndexedDB for offline operation and, when configured, in the store’s Cloudflare D1 database through Cloudflare Workers. The current staging database location is in the United States; review Ghana data-location, transfer and privacy implications before storing real customer or employee data. Browser-local data is <strong>not application-encrypted at rest</strong> in this version. Use a dedicated, OS-encrypted device with a strong screen lock, restrict staff access, and remove local data securely before reassignment. Do not use a shared/public device for live sales.</p>
+        <p>Cloudflare D1/Workers and email-provider settings and contractual terms must be reviewed by the store owner. Payment-gateway processing is not enabled in this cash-only setup. This notice does not promise that a provider, account, backup, or device is configured correctly.</p>
       </section>
 
       <section style={sectionStyle}>
         <h2>Consent and choice</h2>
-        <p>Before a digital payment request is made, the cashier must explain the contact-data purpose and tick the payment consent box only after the customer agrees. For an emailed receipt, the cashier must confirm that the customer asked for it. Do not enter contact details or send a request if the customer declines; offer a paper/PDF receipt or another payment method where available. No marketing consent is implied.</p>
+        <p>Checkout is cash-only, so no payment-gateway contact details or payment-contact consent are requested. For an emailed receipt, the cashier must confirm that the customer asked for it before entering an email address. Do not enter or send the address if the customer declines; offer a paper/PDF receipt instead. No marketing consent is implied. Review this notice and obtain appropriate consent before enabling any gateway in the future.</p>
       </section>
 
       <section style={sectionStyle}>

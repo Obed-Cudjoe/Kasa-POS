@@ -1,5 +1,7 @@
 # POS bug-fix and hardening log
 
+> **Historical snapshot.** This 2026-10-10 log predates the move from Supabase to Cloudflare D1 and current barcode/receipt changes. Its SQL notes describe the old implementation and must not be treated as current D1 test results.
+
 **Review date:** 2026-10-10 · **Scope:** code changes made during local QA/security review. No Supabase migration was executed and no production deployment was made.
 
 | ID | Finding | Change made | Verification | Residual risk/status |

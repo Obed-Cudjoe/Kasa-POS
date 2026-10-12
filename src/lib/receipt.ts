@@ -9,7 +9,7 @@ const asciiSafe = (value: string) => value
   .replace(/₵/g, 'GHS ')
   .replace(/[^\x20-\x7E\xA0-\xFF]/g, '?')
 
-export async function createReceiptPdf(order: Order, refund?: Refund) {
+export async function createReceiptPdf(order: Order, refund?: Refund, shopName = 'Kasa POS') {
   const { PDFDocument, StandardFonts, rgb } = await import('pdf-lib')
   const pdf = await PDFDocument.create()
   const regular = await pdf.embedFont(StandardFonts.Helvetica)
@@ -38,8 +38,8 @@ export async function createReceiptPdf(order: Order, refund?: Refund) {
     y -= 9
   }
 
-  draw('KASA POS', { strong: true, size: 17, align: 'center' })
-  draw('RETAIL RECEIPT · DEMO TEMPLATE', { size: 7, align: 'center' })
+  draw(shopName.trim().slice(0, 80) || 'Kasa POS', { strong: true, size: 17, align: 'center' })
+  draw(refund ? 'RETAIL RETURN RECEIPT' : 'RETAIL SALES RECEIPT', { size: 7, align: 'center' })
   rule()
   draw(`Receipt ${order.orderNumber}`, { strong: true })
   draw(new Date(order.createdAt).toLocaleString('en-GH', { dateStyle: 'medium', timeStyle: 'short' }), { size: 8 })
@@ -72,12 +72,13 @@ export async function createReceiptPdf(order: Order, refund?: Refund) {
   }
   rule()
   draw('Thank you for shopping with us.', { align: 'center', size: 8 })
-  draw('Demo receipt — verify local tax and E-VAT requirements before use.', { align: 'center', size: 6 })
+  if (order.paymentStatus === 'demo_simulated') draw('DEMO PAYMENT SIMULATION · NO FUNDS MOVED', { align: 'center', size: 6 })
+  draw('Confirm local receipt and tax requirements before live use.', { align: 'center', size: 6 })
   return pdf.save()
 }
 
-export async function downloadReceiptPdf(order: Order, refund?: Refund) {
-  const bytes = await createReceiptPdf(order, refund)
+export async function downloadReceiptPdf(order: Order, refund?: Refund, shopName = 'Kasa POS') {
+  const bytes = await createReceiptPdf(order, refund, shopName)
   const blob = new Blob([bytes as BlobPart], { type: 'application/pdf' })
   const url = URL.createObjectURL(blob)
   const link = document.createElement('a')
@@ -87,21 +88,22 @@ export async function downloadReceiptPdf(order: Order, refund?: Refund) {
   URL.revokeObjectURL(url)
 }
 
-export async function shareReceipt(order: Order, refund?: Refund) {
-  const pdfBytes = await createReceiptPdf(order, refund)
+export async function shareReceipt(order: Order, refund?: Refund, shopName = 'Kasa POS') {
+  const pdfBytes = await createReceiptPdf(order, refund, shopName)
   const file = new File([pdfBytes as BlobPart], `${order.orderNumber}${refund ? '-refund' : ''}.pdf`, { type: 'application/pdf' })
+  const businessName = shopName.trim() || 'Kasa POS'
   const summary = refund
-    ? `Refund ${formatMoney(refund.amountMinor, order.currencyCode)} for receipt ${order.orderNumber} (${refund.status}).`
-    : `Receipt ${order.orderNumber}. Total: ${formatMoney(order.totalMinor, order.currencyCode)}. Tax: ${formatMoney(order.taxMinor, order.currencyCode)}.`
+    ? `${businessName} refund ${formatMoney(refund.amountMinor, order.currencyCode)} for receipt ${order.orderNumber} (${refund.status}).`
+    : `${businessName} receipt ${order.orderNumber}. Total: ${formatMoney(order.totalMinor, order.currencyCode)}. Tax: ${formatMoney(order.taxMinor, order.currencyCode)}.`
   if (navigator.share && (!navigator.canShare || navigator.canShare({ files: [file] }))) {
-    await navigator.share({ title: 'Kasa POS receipt', text: summary, files: [file] })
+    await navigator.share({ title: `${businessName} receipt`, text: summary, files: [file] })
     return 'shared' as const
   }
-  await downloadReceiptPdf(order, refund)
+  await downloadReceiptPdf(order, refund, shopName)
   return 'downloaded' as const
 }
 
-export async function printReceiptEscPos(order: Order, transport: 'bluetooth' | 'usb' = 'bluetooth') {
+export async function printReceiptEscPos(order: Order, transport: 'bluetooth' | 'usb' = 'bluetooth', shopName = 'Kasa POS') {
   if (!window.isSecureContext) throw new Error('Printer access requires HTTPS or localhost.')
   if (transport === 'bluetooth' && !('bluetooth' in navigator)) throw new Error('Web Bluetooth is not available in this browser. Use Chrome/Edge on Android or print the PDF.')
   if (transport === 'usb' && !('usb' in navigator)) throw new Error('WebUSB is not available in this browser. Use a supported desktop Chromium browser or print the PDF.')
@@ -143,8 +145,8 @@ export async function printReceiptEscPos(order: Order, transport: 'bluetooth' | 
     codepageMapping: device.codepageMapping && typeof device.codepageMapping === 'object' ? device.codepageMapping as Record<string, number> : undefined,
     errors: 'relaxed',
   })
-  encoder.initialize().align('center').bold(true).line('KASA POS').bold(false)
-    .line('RETAIL RECEIPT').newline().align('left')
+  encoder.initialize().align('center').bold(true).line(shopName.trim().slice(0, 80) || 'Kasa POS').bold(false)
+    .line('RETAIL SALES RECEIPT').newline().align('left')
     .line(`Receipt ${order.orderNumber}`)
     .line(new Date(order.createdAt).toLocaleString('en-GH'))
     .line(`Cashier: ${order.employeeName}`).rule()

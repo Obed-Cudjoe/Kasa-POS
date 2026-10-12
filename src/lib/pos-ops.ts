@@ -2,6 +2,7 @@ import { db } from './local-db'
 import { DEMO_DEVICE_ID, DEMO_STORE_ID } from './demo-seed'
 import { summarizeLines } from './tax'
 import { isWithinRefundLimit } from './permissions'
+import { isValidBarcode, normalizeBarcode } from './barcode'
 import type { CalculatedLine, Employee, InventoryItem, InventoryMovement, Order, Payment, PaymentMethod, PaymentStatus, Product, Refund, RefundLine, Shift, SyncEvent, TaxCategory } from './types'
 
 export function newId() {
@@ -360,9 +361,26 @@ export async function adjustInventory(args: { product: Product; employee: Employ
   return next
 }
 
+async function assertProductIdentifiers(product: Pick<Product, 'id' | 'sku' | 'barcode'>) {
+  const rows = await db.products.toArray()
+  const sku = product.sku.trim().toLowerCase()
+  if (sku && rows.some((row) => row.id !== product.id && row.sku.trim().toLowerCase() === sku)) {
+    throw new Error('That SKU is already in use.')
+  }
+  const barcode = product.barcode?.trim() ?? ''
+  if (!isValidBarcode(barcode)) {
+    throw new Error('Barcode must be 1–64 letters, numbers, dots, underscores, slashes, or hyphens.')
+  }
+  const normalized = normalizeBarcode(barcode)
+  if (normalized && rows.some((row) => row.id !== product.id && normalizeBarcode(row.barcode ?? '') === normalized)) {
+    throw new Error('That barcode is already assigned to another product.')
+  }
+}
+
 export async function saveProduct(product: Product, employee: Employee, previous?: Product) {
+  await assertProductIdentifiers(product)
   const now = new Date().toISOString()
-  const saved = { ...product, rowVersion: previous ? previous.rowVersion + 1 : 1, updatedAt: now, createdAt: previous?.createdAt ?? now }
+  const saved = { ...product, barcode: product.barcode?.trim() || undefined, rowVersion: previous ? previous.rowVersion + 1 : 1, updatedAt: now, createdAt: previous?.createdAt ?? now }
   const event = makeSyncEvent(employee, 'product', saved.id, { product: saved })
   await db.transaction('rw', [db.products, db.inventory, db.syncOutbox], async () => {
     await db.products.put(saved)
@@ -417,17 +435,16 @@ export async function closeShift(shift: Shift, employee: Employee, countedCashMi
   return updated
 }
 
-export async function addNewProduct(args: { name: string; sku: string; categoryName: string; taxCategory: TaxCategory; priceMinor: number; priceMode: Product['priceMode']; stock: number; employee: Employee }) {
+export async function addNewProduct(args: { name: string; sku: string; barcode?: string; categoryName: string; taxCategory: TaxCategory; priceMinor: number; priceMode: Product['priceMode']; stock: number; employee: Employee }) {
   const now = new Date().toISOString()
-  const existing = await db.products.where('sku').equals(args.sku).first()
-  if (existing) throw new Error('That SKU is already in use.')
   const categoryId = (await db.products.toArray()).find((product) => product.categoryName === args.categoryName)?.categoryId ?? newId()
   const product: Product = {
-    id: newId(), storeId: args.employee.storeId, name: args.name.trim(), sku: args.sku.trim(),
+    id: newId(), storeId: args.employee.storeId, name: args.name.trim(), sku: args.sku.trim(), barcode: args.barcode?.trim() || undefined,
     categoryId, categoryName: args.categoryName.trim(), taxCategoryId: args.taxCategory.id,
     priceMinor: Math.round(args.priceMinor), currencyCode: 'GHS', priceMode: args.priceMode,
     unitName: 'each', active: true, rowVersion: 1, createdAt: now, updatedAt: now,
   }
+  await assertProductIdentifiers(product)
   const event = makeSyncEvent(args.employee, 'product', product.id, { product })
   await db.transaction('rw', [db.products, db.inventory, db.inventoryMovements, db.syncOutbox], async () => {
     await db.products.add(product)

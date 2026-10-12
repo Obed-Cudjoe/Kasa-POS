@@ -13,16 +13,18 @@ export async function POST(request: Request) {
       .select('id,store_id,order_id,payment_id,requested_by,status,reason,amount,currency_code,provider_refund_id')
       .eq('store_id', actor.storeId).eq('id', body.refundId).maybeSingle()
     if (refundError || !refund) return Response.json({ error: 'Refund is not synced to the store cloud yet. Keep it pending and retry after sync.' }, { status: 409 })
+    const refundStatus = typeof refund.status === 'string' ? refund.status : ''
+    const savedProviderRefundId = typeof refund.provider_refund_id === 'string' ? refund.provider_refund_id : ''
     if (actor.role === 'cashier' && refund.requested_by !== actor.employeeId) {
       return Response.json({ error: 'Cashiers may submit only refunds attributed to their own profile.' }, { status: 403 })
     }
-    if (['processed', 'processing'].includes(refund.status) && refund.provider_refund_id) {
-      return Response.json({ ok: true, status: refund.status, providerRefundId: refund.provider_refund_id, duplicate: true })
+    if (['processed', 'processing'].includes(refundStatus) && savedProviderRefundId) {
+      return Response.json({ ok: true, status: refundStatus, providerRefundId: savedProviderRefundId, duplicate: true })
     }
-    if (refund.status === 'processing' || refund.status === 'needs_attention') {
+    if (refundStatus === 'processing' || refundStatus === 'needs_attention') {
       return Response.json({ error: 'This refund may already have reached Paystack. Reconcile its status in the provider dashboard; do not submit it again.' }, { status: 409 })
     }
-    if (refund.status !== 'pending') return Response.json({ error: 'Only a pending refund request can be submitted. For a failed attempt, create a new request after reconciliation.' }, { status: 409 })
+    if (refundStatus !== 'pending') return Response.json({ error: 'Only a pending refund request can be submitted. For a failed attempt, create a new request after reconciliation.' }, { status: 409 })
     if (!isWithinRefundLimit(Number(refund.amount), actor.refundLimitMinor)) {
       return Response.json({ error: 'Refund exceeds this employee’s configured authorization limit.' }, { status: 403 })
     }
@@ -30,9 +32,14 @@ export async function POST(request: Request) {
       .select('id,method,provider,provider_reference,provider_transaction_id,amount,currency_code,status')
       .eq('store_id', actor.storeId).eq('id', refund.payment_id).maybeSingle()
     if (paymentError || !payment) return Response.json({ error: 'Original tender payment could not be found.' }, { status: 409 })
-    if (!['card', 'momo'].includes(payment.method) || payment.provider !== 'paystack') return Response.json({ error: 'Original tender does not support a Paystack digital reversal.' }, { status: 409 })
-    if (!['confirmed', 'partially_refunded'].includes(payment.status)) return Response.json({ error: 'Original payment has not been provider-confirmed.' }, { status: 409 })
-    const transaction = payment.provider_transaction_id || payment.provider_reference
+    const tenderMethod = payment.method === 'card' || payment.method === 'momo' ? payment.method : null
+    const paymentStatus = typeof payment.status === 'string' ? payment.status : ''
+    const paymentCurrency = typeof payment.currency_code === 'string' ? payment.currency_code : ''
+    const refundCurrency = typeof refund.currency_code === 'string' ? refund.currency_code : ''
+    if (!tenderMethod || payment.provider !== 'paystack') return Response.json({ error: 'Original tender does not support a Paystack digital reversal.' }, { status: 409 })
+    if (!['confirmed', 'partially_refunded'].includes(paymentStatus)) return Response.json({ error: 'Original payment has not been provider-confirmed.' }, { status: 409 })
+    const transaction = typeof payment.provider_transaction_id === 'string' && payment.provider_transaction_id
+      ? payment.provider_transaction_id : typeof payment.provider_reference === 'string' ? payment.provider_reference : ''
     if (!transaction) return Response.json({ error: 'Provider transaction reference is missing.' }, { status: 409 })
     const { data: claim, error: claimError } = await actor.admin.from('refunds')
       .update({ status: 'processing', provider_reference: transaction, updated_at: new Date().toISOString() })
@@ -55,9 +62,9 @@ export async function POST(request: Request) {
     const providerRefundId = data?.id !== undefined ? String(data.id) : ''
     const providerStatus = String(data?.status ?? 'pending').toLowerCase()
     const providerAmount = data?.amount === undefined ? null : Number(data.amount)
-    const providerCurrency = typeof data?.currency === 'string' ? data.currency : payment.currency_code
+    const providerCurrency = typeof data?.currency === 'string' ? data.currency : paymentCurrency
     const amountMismatch = providerAmount !== null && (!Number.isFinite(providerAmount) || providerAmount !== Number(refund.amount))
-    const currencyMismatch = providerCurrency !== payment.currency_code || refund.currency_code !== payment.currency_code
+    const currencyMismatch = providerCurrency !== paymentCurrency || refundCurrency !== paymentCurrency
     if (!providerRefundId || amountMismatch || currencyMismatch) {
       const { error: noteError } = await actor.admin.from('refunds').update({
         provider_refund_id: providerRefundId || null, provider_reference: String(data?.transaction ?? transaction),
@@ -78,8 +85,9 @@ export async function POST(request: Request) {
     if (status === 'processed' || status === 'failed') {
       const { data: refundRows, error: rowsError } = await actor.admin.from('refunds').select('amount,status').eq('store_id', actor.storeId).eq('order_id', refund.order_id)
       if (rowsError) return Response.json({ error: `Refund status was saved, but order totals need reconciliation: ${rowsError.message}` }, { status: 502 })
-      const confirmed = (refundRows ?? []).filter((row) => row.status === 'processed').reduce((sum, row) => sum + Number(row.amount), 0)
-      const hasPending = (refundRows ?? []).some((row) => ['pending', 'processing', 'requested', 'needs_attention'].includes(row.status))
+      const refundProjection = (refundRows ?? []) as Array<{ amount: number; status: string }>
+      const confirmed = refundProjection.filter((row) => row.status === 'processed').reduce((sum, row) => sum + Number(row.amount), 0)
+      const hasPending = refundProjection.some((row) => ['pending', 'processing', 'requested', 'needs_attention'].includes(row.status))
       const { data: order, error: orderError } = await actor.admin.from('orders').select('total_amount').eq('store_id', actor.storeId).eq('id', refund.order_id).maybeSingle()
       if (orderError || !order) return Response.json({ error: `Refund status was saved, but the original order projection needs reconciliation: ${orderError?.message ?? 'order not found'}` }, { status: 502 })
       const orderStatus = confirmed >= Number(order.total_amount) ? 'refunded' : confirmed > 0 || hasPending ? 'partially_refunded' : 'paid'

@@ -1,7 +1,6 @@
 'use client'
 
 import { db, getMeta, setMeta } from './local-db'
-import { getAccessToken } from './supabase-browser'
 import type { CalculatedLine, Employee, InventoryMovement, Order, Payment, Product, Refund, RefundStatus, Shift, SyncEvent, TaxCategory, TaxLine } from './types'
 
 const text = (value: unknown, fallback = '') => typeof value === 'string' ? value : value == null ? fallback : String(value)
@@ -10,8 +9,6 @@ const arr = (value: unknown): Array<Record<string, unknown>> => Array.isArray(va
 const iso = (value: unknown) => value ? new Date(String(value)).toISOString() : new Date().toISOString()
 
 export async function pushOutbox() {
-  const token = await getAccessToken()
-  if (!token) return { sent: 0, pending: await db.syncOutbox.where('status').equals('pending').count(), configured: false }
   const events = await db.syncOutbox.where('status').equals('pending').toArray()
   events.sort((a, b) => a.createdAt.localeCompare(b.createdAt))
   let sent = 0
@@ -19,7 +16,7 @@ export async function pushOutbox() {
   for (let start = 0; start < events.length; start += 50) {
     const batch = events.slice(start, start + 50)
     const response = await fetch('/api/sync/push', {
-      method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      method: 'POST', headers: { 'content-type': 'application/json' }, credentials: 'same-origin',
       body: JSON.stringify({ events: batch }), cache: 'no-store',
     })
     const payload = await response.json().catch(() => ({})) as { error?: string; results?: Array<{ eventId: string; status: string; error?: string }> }
@@ -66,11 +63,9 @@ async function markEntityConflict(event: SyncEvent) {
 }
 
 export async function pullCloud() {
-  const token = await getAccessToken()
-  if (!token) return { pulled: 0, configured: false }
   const cursor = await getMeta<string | null>('cloud-pull-cursor', null)
   const endpoint = `/api/sync/pull${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`
-  const response = await fetch(endpoint, { headers: { authorization: `Bearer ${token}` }, cache: 'no-store' })
+  const response = await fetch(endpoint, { credentials: 'same-origin', cache: 'no-store' })
   const payload = await response.json().catch(() => ({})) as Record<string, unknown> & { error?: string }
   if (!response.ok) throw new Error(payload.error || `Cloud pull failed (${response.status}).`)
   const categoryRows = arr(payload.categories)
@@ -107,13 +102,13 @@ export async function pullCloud() {
   }))
   const employees: Employee[] = employeeRows.map((row) => ({
     id: text(row.id), storeId: text(row.store_id), authUserId: text(row.auth_user_id) || undefined,
-    displayName: text(row.display_name), role: text(row.role, 'cashier') as Employee['role'],
+    displayName: text(row.display_name), email: text(row.email) || undefined, role: text(row.role, 'cashier') as Employee['role'],
     refundLimitMinor: row.refund_limit_minor == null ? null : number(row.refund_limit_minor),
-    status: text(row.status) === 'disabled' ? 'disabled' : 'active', createdAt: iso(row.created_at),
+    status: text(row.status) === 'disabled' ? 'disabled' : text(row.status) === 'invited' ? 'invited' : 'active', createdAt: iso(row.created_at),
   }))
   const employeeNames = new Map(employees.map((employee) => [employee.id, employee.displayName]))
   const products: Product[] = productRows.map((row) => ({
-    id: text(row.id), storeId: text(row.store_id), name: text(row.name), sku: text(row.sku),
+    id: text(row.id), storeId: text(row.store_id), name: text(row.name), sku: text(row.sku), barcode: text(row.barcode) || undefined,
     categoryId: text(row.category_id), categoryName: categoryNames.get(text(row.category_id)) ?? 'General',
     taxCategoryId: text(row.tax_category_id), priceMinor: number(row.price_minor),
     currencyCode: text(row.currency_code, 'GHS'), priceMode: text(row.price_mode, 'inclusive') as Product['priceMode'],
@@ -239,6 +234,8 @@ export async function pullCloud() {
     if (movements.length) await db.inventoryMovements.bulkPut(movements)
   })
   await setMeta('cloud-daily-reports', arr(payload.dailyReports))
+  const storeProfile = payload.store && typeof payload.store === 'object' ? payload.store as Record<string, unknown> : null
+  if (typeof storeProfile?.name === 'string' && storeProfile.name.trim()) await setMeta('shop-name', storeProfile.name.trim())
   await setMeta('cloud-pull-cursor', text(payload.serverTime, new Date().toISOString()))
   return { pulled: products.length + orders.length + shifts.length + inventory.length, configured: true }
 }

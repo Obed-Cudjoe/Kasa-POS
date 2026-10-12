@@ -1,6 +1,7 @@
 import { authorizeRequest, routeError } from '@/lib/cloud'
 import { paystackFetch, randomProviderReference } from '@/lib/paystack'
 import { PRIVACY_NOTICE_VERSION } from '@/lib/privacy'
+import { getWorkerEnv } from '@/lib/d1'
 
 export const dynamic = 'force-dynamic'
 
@@ -10,14 +11,17 @@ export async function POST(request: Request) {
   let requestReference: string | undefined
   try {
     const actor = await authorizeRequest(request)
+    const env = await getWorkerEnv()
     const body = await request.json() as { orderId?: string; paymentId?: string; email?: string; phone?: string; network?: string }
     if (!body.orderId || !body.paymentId) return Response.json({ error: 'Missing order or payment reference.' }, { status: 400 })
     const { data: payment, error: paymentError } = await actor.admin.from('payments')
       .select('id,store_id,order_id,method,status,amount,currency_code,provider_reference,provider_network')
       .eq('store_id', actor.storeId).eq('id', body.paymentId).eq('order_id', body.orderId).maybeSingle()
     if (paymentError || !payment) return Response.json({ error: 'Pending payment was not found in cloud sync. Sync the pending sale, then retry.' }, { status: 409 })
-    if (!['card', 'momo'].includes(payment.method)) return Response.json({ error: 'Only card or mobile-money payments can be initialized here.' }, { status: 400 })
-    if (!['pending', 'initiated', 'failed'].includes(payment.status)) return Response.json({ error: 'This payment is not in a retryable state.' }, { status: 409 })
+    const method = payment.method === 'card' || payment.method === 'momo' ? payment.method : null
+    const paymentStatus = typeof payment.status === 'string' ? payment.status : ''
+    if (!method) return Response.json({ error: 'Only card or mobile-money payments can be initialized here.' }, { status: 400 })
+    if (!['pending', 'initiated', 'failed'].includes(paymentStatus)) return Response.json({ error: 'This payment is not in a retryable state.' }, { status: 409 })
     const { data: order, error: orderError } = await actor.admin.from('orders')
       .select('id,employee_id,status,total_amount,currency_code,order_number').eq('store_id', actor.storeId).eq('id', body.orderId).maybeSingle()
     if (orderError || !order || order.status !== 'pending_payment' || Number(order.total_amount) !== Number(payment.amount)) {
@@ -26,33 +30,32 @@ export async function POST(request: Request) {
     if (actor.role === 'cashier' && order.employee_id !== actor.employeeId) {
       return Response.json({ error: 'Cashiers may request payment only for their own sales.' }, { status: 403 })
     }
-    if (payment.status !== 'failed' && payment.provider_reference) {
-      return Response.json({ ok: true, method: payment.method, reference: payment.provider_reference, providerStatus: payment.status, message: 'A provider request already uses this reference or may still be processing. No second charge request was sent; check provider status first.' }, { headers: { 'cache-control': 'no-store' } })
+    if (paymentStatus !== 'failed' && payment.provider_reference) {
+      return Response.json({ ok: true, method, reference: payment.provider_reference, providerStatus: paymentStatus, message: 'A provider request already uses this reference or may still be processing. No second charge request was sent; check provider status first.' }, { headers: { 'cache-control': 'no-store' } })
     }
     const { data: consent, error: consentError } = await actor.admin.from('privacy_consent_events').select('id')
       .eq('store_id', actor.storeId).eq('order_id', body.orderId)
       .eq('purpose_code', 'digital_payment_contact').eq('policy_version', PRIVACY_NOTICE_VERSION).maybeSingle()
     if (consentError || !consent) return Response.json({ error: 'Customer consent for payment-contact processing must be recorded before a provider request.' }, { status: 403 })
-    const email = body.email?.trim() || process.env.PAYMENT_RECEIPT_EMAIL || process.env.PAYSTACK_DEFAULT_EMAIL
+    const email = body.email?.trim() || env.PAYMENT_RECEIPT_EMAIL || env.PAYSTACK_DEFAULT_EMAIL
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return Response.json({ error: 'A valid customer email is required by the Paystack charge request.' }, { status: 400 })
-    if (payment.method === 'momo' && (!body.phone || !/^\+?[0-9]{9,15}$/.test(body.phone.replace(/[\s-]/g, '')) || !body.network || !NETWORKS.has(body.network))) {
+    if (method === 'momo' && (!body.phone || !/^\+?[0-9]{9,15}$/.test(body.phone.replace(/[\s-]/g, '')) || !body.network || !NETWORKS.has(body.network))) {
       return Response.json({ error: 'Enter a valid mobile number and select MTN, ATMoney/Airtel Money, or Telecel.' }, { status: 400 })
     }
-    const reference = randomProviderReference(payment.method === 'momo' ? 'KASA-MOMO' : 'KASA-CARD')
+    const reference = randomProviderReference(method === 'momo' ? 'KASA-MOMO' : 'KASA-CARD')
     const { data: claim, error: claimError } = await actor.admin.from('payments').update({
       provider: 'paystack', provider_reference: reference,
-      provider_network: payment.method === 'momo' ? body.network : 'card',
+      provider_network: method === 'momo' ? body.network : 'card',
       status: 'initiated', updated_at: new Date().toISOString(),
-    }).eq('store_id', actor.storeId).eq('id', payment.id).eq('status', payment.status).select('id').maybeSingle()
+    }).eq('store_id', actor.storeId).eq('id', payment.id).eq('status', paymentStatus).select('id').maybeSingle()
     if (claimError) throw new Error(`Payment request could not be reserved: ${claimError.message}`)
     if (!claim) return Response.json({ error: 'Another request changed this payment. Refresh status before retrying.' }, { status: 409 })
     requestReference = reference
-    const callback = process.env.NEXT_PUBLIC_APP_URL
-      ? `${process.env.NEXT_PUBLIC_APP_URL.replace(/\/$/, '')}/?payment=return&order=${encodeURIComponent(body.orderId)}&reference=${encodeURIComponent(reference)}`
-      : `${new URL(request.url).origin}/?payment=return&order=${encodeURIComponent(body.orderId)}&reference=${encodeURIComponent(reference)}`
+    const callbackOrigin = env.PUBLIC_APP_URL ? new URL(env.PUBLIC_APP_URL).origin : new URL(request.url).origin
+    const callback = `${callbackOrigin}/?payment=return&order=${encodeURIComponent(body.orderId)}&reference=${encodeURIComponent(reference)}`
     const metadata = { store_id: actor.storeId, order_id: body.orderId, payment_id: payment.id, order_number: order.order_number, source: 'kasa-pos' }
     let providerResponse: Record<string, unknown>
-    if (payment.method === 'momo') {
+    if (method === 'momo') {
       providerResponse = await paystackFetch('/charge', {
         method: 'POST',
         body: JSON.stringify({
@@ -83,7 +86,7 @@ export async function POST(request: Request) {
     if (orderUpdateError) return Response.json({ error: `Payment reference ${reference} was saved, but order sync needs a refresh: ${orderUpdateError.message}`, reference }, { status: 502 })
 
     return Response.json({
-      ok: true, method: payment.method, reference, providerStatus: status,
+      ok: true, method, reference, providerStatus: status,
       authorizationUrl: typeof data?.authorization_url === 'string' ? data.authorization_url : undefined,
       displayText: typeof data?.display_text === 'string' ? data.display_text : undefined,
       message: typeof providerResponse.message === 'string' ? providerResponse.message : 'Payment request sent. Wait for provider confirmation.',

@@ -1,6 +1,6 @@
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib'
-import { Resend } from 'resend'
 import { authorizeRequest, routeError } from '@/lib/cloud'
+import { getWorkerEnv } from '@/lib/d1'
 import { formatMoney } from '@/lib/money'
 import { PRIVACY_NOTICE_VERSION } from '@/lib/privacy'
 
@@ -9,7 +9,7 @@ export const dynamic = 'force-dynamic'
 const esc = (value: string) => value.replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]!))
 const cleanPdf = (value: string) => value.replace(/[–—]/g, '-').replace(/·/g, '|').replace(/[^\x20-\x7E\xA0-\xFF]/g, '?')
 
-async function buildPdf(order: Record<string, unknown>, items: Array<Record<string, unknown>>, taxes: Array<Record<string, unknown>>) {
+async function buildPdf(order: Record<string, unknown>, items: Array<Record<string, unknown>>, taxes: Array<Record<string, unknown>>, shopName: string) {
   const pdf = await PDFDocument.create()
   const regular = await pdf.embedFont(StandardFonts.Helvetica)
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold)
@@ -29,8 +29,8 @@ async function buildPdf(order: Record<string, unknown>, items: Array<Record<stri
   }
   const rule = () => { y -= 2; page.drawLine({ start: { x: left, y }, end: { x: right, y }, thickness: 0.5, color: rgb(0.78, 0.81, 0.79) }); y -= 9 }
   const currency = String(order.currency_code ?? 'GHS')
-  line('KASA POS', true, 17, 'center')
-  line('RETAIL RECEIPT', false, 8, 'center')
+  line(shopName.trim().slice(0, 80) || 'Kasa POS', true, 17, 'center')
+  line('SALES RECEIPT', false, 8, 'center')
   rule()
   line(`Receipt ${String(order.order_number ?? order.id)}`, true)
   line(new Date(String(order.created_at)).toLocaleString('en-GH', { dateStyle: 'medium', timeStyle: 'short' }), false, 8)
@@ -58,7 +58,8 @@ async function buildPdf(order: Record<string, unknown>, items: Array<Record<stri
 export async function POST(request: Request) {
   try {
     const actor = await authorizeRequest(request)
-    if (!process.env.RESEND_API_KEY || !process.env.RECEIPT_FROM_EMAIL) {
+    const env = await getWorkerEnv()
+    if (!env.RESEND_API_KEY || !env.RESEND_FROM_EMAIL) {
       return Response.json({ error: 'Managed receipt email is not configured. Use the device Share/Mail or PDF print fallback.' }, { status: 503 })
     }
     const body = await request.json() as { orderId?: string; email?: string }
@@ -81,23 +82,33 @@ export async function POST(request: Request) {
       .select('id,product_name_snapshot,quantity,currency_code,line_total,tax_rate,tax_amount')
       .eq('store_id', actor.storeId).eq('order_id', order.id).order('created_at')
     if (itemError) throw new Error(itemError.message)
-    const itemIds = (items ?? []).map((item) => item.id)
+    const orderItems = (items ?? []) as Array<{ id: string } & Record<string, unknown>>
+    const itemIds = orderItems.map((item) => item.id)
     const { data: taxes, error: taxError } = itemIds.length
       ? await actor.admin.from('order_item_taxes').select('component_name_snapshot,rate_percent,tax_amount').eq('store_id', actor.storeId).in('order_item_id', itemIds)
       : { data: [], error: null }
     if (taxError) throw new Error(taxError.message)
-    const pdf = await buildPdf(order, items ?? [], taxes ?? [])
-    const resend = new Resend(process.env.RESEND_API_KEY)
-    const total = formatMoney(Number(order.total_amount), order.currency_code)
-    const { data: sent, error: sendError } = await resend.emails.send({
-      from: process.env.RECEIPT_FROM_EMAIL,
-      to: recipient,
-      subject: `Receipt ${order.order_number} · Kasa POS`,
-      html: `<p>Thank you for shopping with us.</p><p>Receipt <strong>${esc(order.order_number ?? '')}</strong> · ${esc(total)}</p><p>The PDF includes the item and tax breakdown.</p><p><small>Confirm applicable local receipt and tax certification requirements before use.</small></p>`,
-      attachments: [{ filename: `${order.order_number || 'receipt'}.pdf`, content: Buffer.from(pdf).toString('base64') }],
+    const { data: store, error: storeError } = await actor.admin.from('stores').select('name').eq('id', actor.storeId).maybeSingle()
+    if (storeError || !store) throw new Error(storeError?.message ?? 'Store profile could not be found.')
+    const shopName = String(store.name ?? '').trim() || 'Kasa POS'
+    const pdf = await buildPdf(order, orderItems, (taxes ?? []) as Array<Record<string, unknown>>, shopName)
+    const currencyCode = typeof order.currency_code === 'string' ? order.currency_code : 'GHS'
+    const total = formatMoney(Number(order.total_amount), currencyCode)
+    const emailResponse = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${env.RESEND_API_KEY}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        from: env.RESEND_FROM_EMAIL,
+        to: [recipient],
+        subject: `Receipt ${order.order_number} · ${shopName}`,
+        html: `<p>Thank you for shopping with <strong>${esc(shopName)}</strong>.</p><p>Receipt <strong>${esc(String(order.order_number ?? ''))}</strong> · ${esc(total)}</p><p>The PDF includes the item and tax breakdown.</p><p><small>Confirm applicable local receipt and tax certification requirements before use.</small></p>`,
+        attachments: [{ filename: `${order.order_number || 'receipt'}.pdf`, content: Buffer.from(pdf).toString('base64') }],
+      }),
+      cache: 'no-store',
     })
-    if (sendError) throw new Error(sendError.message)
-    return Response.json({ ok: true, emailId: sent?.id }, { headers: { 'cache-control': 'no-store' } })
+    if (!emailResponse.ok) throw new Error('Managed receipt email could not be sent. Use the device Share/Mail or PDF fallback.')
+    const sent = await emailResponse.json().catch(() => ({})) as { id?: string }
+    return Response.json({ ok: true, emailId: sent.id }, { headers: { 'cache-control': 'no-store' } })
   } catch (error) {
     return routeError(error)
   }

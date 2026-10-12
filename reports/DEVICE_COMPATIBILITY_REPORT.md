@@ -1,5 +1,7 @@
 # Device and printer compatibility report
 
+> **Historical snapshot.** This report predates the barcode-scanning and receipt-name implementation. It does not test any physical barcode scanner, and its older Supabase references describe the previous backend architecture.
+
 **Date:** 2026-10-10 · **Status:** Source/configuration review and local Worker smoke test only. No Android tablet, Android phone, iPad, iPhone, physical printer, Bluetooth pairing, USB session, or offline browser test was performed.
 
 ## Summary

@@ -1,5 +1,7 @@
 # Payment-security (PCI) and Ghana privacy checklist
 
+> **Historical draft — not a current release attestation.** This checklist predates the switch from Supabase to Cloudflare D1. Replace Supabase-specific steps with verified D1/Workers staging checks before relying on it; remote database, backups, location, provider contracts and production controls remain unverified.
+
 **Review date:** 2026-10-10 · **Scope:** source/configuration review and local synthetic tests. This is a readiness checklist, not a PCI assessment, legal opinion, DPC registration certificate or proof of compliance.
 
 ## A. PCI/payment-security checklist

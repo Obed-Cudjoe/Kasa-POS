@@ -4,7 +4,7 @@ import type { SyncEventType, UserRole } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
 
-const privilegedEvents = new Set<SyncEventType>(['product', 'tax', 'employee'])
+const privilegedEvents = new Set<SyncEventType>(['product', 'tax'])
 
 export async function POST(request: Request) {
   try {
@@ -22,6 +22,10 @@ export async function POST(request: Request) {
       const employeeId = String(event.employeeId ?? '')
       if (!eventId || storeId !== actor.storeId || !deviceId || !employeeId) {
         results.push({ eventId, status: 'rejected', error: 'Event identity or store does not match the signed-in account.' })
+        continue
+      }
+      if (eventType === 'employee') {
+        results.push({ eventId, status: 'rejected', error: 'Employee access is managed through owner-issued invitations and the employee role API.' })
         continue
       }
       if (privilegedEvents.has(eventType) && !(['owner', 'manager'] as UserRole[]).includes(actor.role)) {
@@ -55,22 +59,8 @@ export async function POST(request: Request) {
         results.push({ eventId, status: 'rejected', error: 'Managers cannot sync changes attributed to an owner profile.' })
         continue
       }
-      if (eventType === 'employee' && actor.role === 'manager') {
-        const target = (event.payload as { employee?: { id?: string; role?: string } } | undefined)?.employee
-        if (target?.role === 'owner') {
-          results.push({ eventId, status: 'rejected', error: 'Only an owner can grant the owner role.' })
-          continue
-        }
-        if (target?.id) {
-          const { data: existingTarget } = await actor.admin.from('employees').select('role').eq('store_id', actor.storeId).eq('id', target.id).maybeSingle()
-          if (existingTarget?.role === 'owner') {
-            results.push({ eventId, status: 'rejected', error: 'Managers cannot edit an owner profile.' })
-            continue
-          }
-        }
-      }
       const normalizedEvent = { ...event, eventId, storeId, deviceId, employeeId, eventType }
-      const { data, error } = await actor.admin.rpc('ingest_pos_event', { p_event: normalizedEvent })
+      const { data, error } = await actor.admin.rpc<{ status?: string; summary?: unknown }>('ingest_pos_event', { p_event: normalizedEvent })
       if (error) results.push({ eventId, status: 'rejected', error: error.message })
       else results.push({ eventId, status: data?.status ?? 'accepted', summary: data?.summary })
     }

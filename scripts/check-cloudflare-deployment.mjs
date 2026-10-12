@@ -57,7 +57,7 @@ try {
 
   console.log(`PASS: Kasa POS homepage and health route are responding at ${base.origin}`)
   console.log(`mode=${payload.mode}; cloudConfigured=${payload.cloudConfigured}; paymentsConfigured=${Boolean(payload.paymentsConfigured)}`)
-  console.log('Note: /api/health validates runtime configuration flags; it does not perform a Supabase database read/write.')
+  console.log('Note: /api/health checks whether the D1 binding is present; it does not prove successful D1 reads/writes or production readiness.')
 } catch (error) {
   if (error instanceof TypeError && String(error).includes('fetch')) {
     fail(`network request failed: ${error.message}`)

@@ -1,15 +1,16 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { FormEvent, ReactNode } from 'react'
+import type { FormEvent, KeyboardEvent, ReactNode } from 'react'
 import {
   Activity, AlertTriangle, ArrowDownToLine, ArrowLeftRight, BarChart3, Banknote, Boxes,
   Check, ChevronDown, CircleDollarSign, Clock3, Cloud, CreditCard, FileText,
   History, LayoutDashboard, Loader2, LogOut, Mail, Menu, Package, Plus, Printer, ReceiptText,
-  RefreshCw, RotateCcw, Search, Settings, ShieldCheck, ShoppingBasket, ShoppingCart, Smartphone, Sparkles,
+  RefreshCw, RotateCcw, ScanLine, Search, Settings, ShieldCheck, ShoppingBasket, ShoppingCart, Smartphone, Sparkles,
   Store, Trash2, TrendingUp, UserPlus, Users, Wifi, WifiOff, X,
 } from 'lucide-react'
 import { db, getMeta, setMeta, clearLocalDemoData } from '@/lib/local-db'
+import { findProductByScanCode } from '@/lib/barcode'
 import { ensureDemoData, DEMO_DEVICE_ID } from '@/lib/demo-seed'
 import { calculateLine, summarizeLines, taxLabel } from '@/lib/tax'
 import { formatMoney, inputFromMinor, parseMoneyInput } from '@/lib/money'
@@ -19,23 +20,23 @@ import {
   saveProduct, saveTaxCategory,
 } from '@/lib/pos-ops'
 import { downloadReceiptPdf, printReceiptEscPos, shareReceipt } from '@/lib/receipt'
-import { getAccessToken, getBrowserSupabase } from '@/lib/supabase-browser'
 import { hasOfflinePin, saveOfflinePin, verifyOfflinePin, clearOfflinePin } from '@/lib/offline-pin'
 import { pullCloud, syncNow } from '@/lib/sync-client'
 import { PRIVACY_NOTICE_PATH, PRIVACY_NOTICE_VERSION } from '@/lib/privacy'
 import type { CalculatedLine, Employee, Order, PaymentMethod, Product, Refund, Shift, TaxCategory, TaxComponent, TaxTreatment, UserRole } from '@/lib/types'
 
 type View = 'checkout' | 'transactions' | 'products' | 'inventory' | 'reports' | 'shifts' | 'team' | 'tax' | 'settings' | 'more'
+type AuthMode = 'signin' | 'register' | 'forgot' | 'reset' | 'accept-invite'
 type ModalName = 'payment' | 'receipt' | 'refund' | 'product' | 'stock' | 'shift' | 'employee' | 'tax' | null
 
 type ToastState = { message: string; tone: 'plain' | 'success' | 'error' } | null
 type PendingPayment = { orderId: string; paymentId: string; method: Exclude<PaymentMethod, 'cash'>; reference?: string; message: string; network?: string; retryable?: boolean }
 type BeforeInstallPromptEvent = Event & { prompt: () => Promise<void>; userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }> }
-type ProductFormState = { id?: string; name: string; sku: string; categoryName: string; taxCategoryId: string; price: string; priceMode: Product['priceMode']; stock: string; active: boolean }
+type ProductFormState = { id?: string; name: string; sku: string; barcode: string; categoryName: string; taxCategoryId: string; price: string; priceMode: Product['priceMode']; stock: string; active: boolean }
 type TaxFormState = { id?: string; name: string; code: string; treatment: TaxTreatment; defaultPriceMode: Product['priceMode']; effectiveFrom: string; components: TaxComponent[] }
 
-const CLOUD_PUBLIC_READY = Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY)
-const APP_DEMO_MODE = process.env.NEXT_PUBLIC_DEMO_MODE !== 'false' || !CLOUD_PUBLIC_READY
+const APP_DEMO_MODE = process.env.NEXT_PUBLIC_DEMO_MODE !== 'false'
+const CASH_ONLY_CHECKOUT = true // Retain gateway code, but hide/guard non-cash checkout until explicitly re-scoped.
 const money = (minor: number, currency = 'GHS') => formatMoney(minor, currency)
 const initials = (name: string) => name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join('').toUpperCase() || 'KS'
 const titleCase = (value: string) => value.replaceAll('_', ' ').replace(/\b\w/g, (char) => char.toUpperCase())
@@ -110,11 +111,11 @@ export function PosApp() {
   const [online, setOnline] = useState(true)
   const [syncBusy, setSyncBusy] = useState(false)
   const [cloudSignedIn, setCloudSignedIn] = useState(false)
-  const [cloudPaymentEnabled, setCloudPaymentEnabled] = useState(false)
   const [toast, setToast] = useState<ToastState>(null)
   const [modal, setModal] = useState<ModalName>(null)
   const [cart, setCart] = useState<Record<string, number>>({})
   const [search, setSearch] = useState('')
+  const [scanInput, setScanInput] = useState('')
   const [activeCategory, setActiveCategory] = useState('All items')
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cash')
   const [cashReceived, setCashReceived] = useState('')
@@ -133,7 +134,7 @@ export function PosApp() {
   const [tableSearch, setTableSearch] = useState('')
   const [productForm, setProductForm] = useState<ProductFormState | null>(null)
   const [taxForm, setTaxForm] = useState<TaxFormState | null>(null)
-  const [employeeForm, setEmployeeForm] = useState<{ id?: string; displayName: string; role: UserRole; refundLimit: string } | null>(null)
+  const [employeeForm, setEmployeeForm] = useState<{ id?: string; displayName: string; email?: string; role: UserRole; refundLimit: string } | null>(null)
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null)
   const [refundAvailable, setRefundAvailable] = useState<Record<string, number>>({})
   const [refundQty, setRefundQty] = useState<Record<string, number>>({})
@@ -149,6 +150,15 @@ export function PosApp() {
   const [loginPassword, setLoginPassword] = useState('')
   const [loginBusy, setLoginBusy] = useState(false)
   const [loginError, setLoginError] = useState('')
+  const [authMode, setAuthMode] = useState<AuthMode>('signin')
+  const [authNotice, setAuthNotice] = useState('')
+  const [registerStoreName, setRegisterStoreName] = useState('')
+  const [registerOwnerName, setRegisterOwnerName] = useState('')
+  const [registerPassword, setRegisterPassword] = useState('')
+  const [resetToken, setResetToken] = useState('')
+  const [resetPassword, setResetPassword] = useState('')
+  const [inviteToken, setInviteToken] = useState('')
+  const [invitePassword, setInvitePassword] = useState('')
   const [cachedOfflineEmployee, setCachedOfflineEmployee] = useState<Employee | null>(null)
   const [offlinePinAvailable, setOfflinePinAvailable] = useState(false)
   const [offlinePinInput, setOfflinePinInput] = useState('')
@@ -157,6 +167,9 @@ export function PosApp() {
   const [offlinePinSaving, setOfflinePinSaving] = useState(false)
   const [displayCurrency, setDisplayCurrency] = useState<'GHS' | 'USD' | 'EUR' | 'KES'>('GHS')
   const [fxRate, setFxRate] = useState('')
+  const [shopName, setShopName] = useState(APP_DEMO_MODE ? 'Accra Retail Demo' : '')
+  const [shopNameDraft, setShopNameDraft] = useState(APP_DEMO_MODE ? 'Accra Retail Demo' : '')
+  const [shopNameSaving, setShopNameSaving] = useState(false)
   const [now, setNow] = useState(new Date())
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const callbackHandled = useRef(false)
@@ -170,10 +183,10 @@ export function PosApp() {
     toastTimer.current = setTimeout(() => setToast(null), 4200)
   }, [])
 
-  const recordPrivacyConsent = async (purpose: 'digital_payment_contact' | 'receipt_email', orderId: string, token: string) => {
+  const recordPrivacyConsent = async (purpose: 'digital_payment_contact' | 'receipt_email', orderId: string) => {
     const response = await fetch('/api/privacy/consent', {
       method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ orderId, purpose, policyVersion: PRIVACY_NOTICE_VERSION }),
       cache: 'no-store',
     })
@@ -191,7 +204,7 @@ export function PosApp() {
     setInventory(stockRows)
     setOrders(orderRows.sort((a, b) => b.createdAt.localeCompare(a.createdAt)))
     setRefunds(refundRows.sort((a, b) => b.createdAt.localeCompare(a.createdAt)))
-    setEmployees(employeeRows.filter((person) => person.status === 'active').sort((a, b) => roleOrder[a.role] - roleOrder[b.role] || a.displayName.localeCompare(b.displayName)))
+    setEmployees(employeeRows.filter((person) => person.status !== 'disabled').sort((a, b) => roleOrder[a.role] - roleOrder[b.role] || a.displayName.localeCompare(b.displayName)))
     setShifts(shiftRows.sort((a, b) => b.openedAt.localeCompare(a.openedAt)))
     setPendingCount(outboxRows.filter((event) => event.status === 'pending').length)
     setConflictCount(outboxRows.filter((event) => event.status === 'conflict').length)
@@ -223,6 +236,9 @@ export function PosApp() {
         }
         if (APP_DEMO_MODE) {
           await ensureDemoData()
+          const localShopName = await getMeta<string>('shop-name', 'Accra Retail Demo')
+          setShopName(localShopName)
+          setShopNameDraft(localShopName)
           if (!mounted) return
           await refreshLocalState()
           const rememberedId = localStorage.getItem('pos-selected-employee')
@@ -230,35 +246,59 @@ export function PosApp() {
             const remembered = await db.employees.get(rememberedId)
             if (remembered?.status === 'active') setEmployee(remembered)
           }
-          const health = await fetch('/api/health', { cache: 'no-store' }).then((response) => response.json()).catch(() => null)
-          if (mounted) setCloudPaymentEnabled(Boolean(health?.paymentsConfigured))
         } else {
+          const cachedShopName = await getMeta<string>('shop-name', '')
+          if (cachedShopName) { setShopName(cachedShopName); setShopNameDraft(cachedShopName) }
           const cachedEmployee = await getMeta<Employee | null>('cached-employee', null)
-          const supabase = getBrowserSupabase()
-          const { data: { session } } = supabase ? await supabase.auth.getSession() : { data: { session: null } }
-          if (session?.access_token) {
-            const profileResponse = await fetch('/api/auth/session', { headers: { authorization: `Bearer ${session.access_token}` }, cache: 'no-store' }).catch(() => null)
-            if (profileResponse?.ok) {
-              const profile = await profileResponse.json() as { employee: Employee }
-              await db.employees.put(profile.employee)
-              setEmployee(profile.employee)
-              setCachedOfflineEmployee(null)
-              setCloudSignedIn(true)
-              await setMeta('cached-employee', profile.employee)
-              await pullCloud().catch((error) => showToast(error instanceof Error ? error.message : 'Cloud data could not be refreshed.', 'error'))
-            } else if (!navigator.onLine && cachedEmployee) {
-              setCachedOfflineEmployee(cachedEmployee)
-              setOfflinePinAvailable(await hasOfflinePin(cachedEmployee.id))
-              setCloudSignedIn(false)
+          const params = new URLSearchParams(window.location.search)
+          const resetFromLink = params.get('reset')
+          const inviteFromLink = params.get('invite')
+          if (resetFromLink) {
+            setResetToken(resetFromLink)
+            setAuthMode('reset')
+            params.delete('reset')
+          } else if (inviteFromLink) {
+            setInviteToken(inviteFromLink)
+            setAuthMode('accept-invite')
+            params.delete('invite')
+          } else if (params.get('verified') === '1') {
+            setAuthNotice('Email verified. Sign in with your new account.')
+            params.delete('verified')
+          }
+          const remainingQuery = params.toString()
+          if (resetFromLink || inviteFromLink || window.location.search.includes('verified=1')) {
+            window.history.replaceState(null, '', `${window.location.pathname}${remainingQuery ? `?${remainingQuery}` : ''}${window.location.hash}`)
+          }
+          let logoutPending = await getMeta<boolean>('auth-logout-pending', false)
+          if (logoutPending && navigator.onLine) {
+            const logoutResponse = await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin', cache: 'no-store' }).catch(() => null)
+            if (logoutResponse?.ok) {
+              await db.appMeta.delete('auth-logout-pending')
+              logoutPending = false
             }
+          }
+          const profileResponse = logoutPending ? null : await fetch('/api/auth/session', { credentials: 'same-origin', cache: 'no-store' }).catch(() => null)
+          if (profileResponse?.ok) {
+            const profile = await profileResponse.json() as { employee: Employee; store?: { id?: string; name?: string } }
+            if (profile.store?.name) {
+              setShopName(profile.store.name)
+              setShopNameDraft(profile.store.name)
+              await setMeta('shop-name', profile.store.name)
+            }
+            await db.employees.put(profile.employee)
+            setEmployee(profile.employee)
+            setCachedOfflineEmployee(null)
+            setCloudSignedIn(true)
+            await setMeta('cached-employee', profile.employee)
+            await pullCloud().catch((error) => showToast(error instanceof Error ? error.message : 'Cloud data could not be refreshed.', 'error'))
+            const latestShopName = await getMeta<string>('shop-name', profile.store?.name ?? cachedShopName)
+            if (latestShopName) { setShopName(latestShopName); setShopNameDraft(latestShopName) }
           } else if (!navigator.onLine && cachedEmployee) {
             setCachedOfflineEmployee(cachedEmployee)
             setOfflinePinAvailable(await hasOfflinePin(cachedEmployee.id))
             setCloudSignedIn(false)
           }
           if (mounted) await refreshLocalState()
-          const health = await fetch('/api/health', { cache: 'no-store' }).then((response) => response.json()).catch(() => null)
-          if (mounted) setCloudPaymentEnabled(Boolean(health?.paymentsConfigured))
         }
       } catch (error) {
         showToast(error instanceof Error ? error.message : 'The POS could not start.', 'error')
@@ -267,7 +307,16 @@ export function PosApp() {
       }
     }
     void boot()
-    const updateOnline = () => setOnline(navigator.onLine)
+    const updateOnline = () => {
+      setOnline(navigator.onLine)
+      if (navigator.onLine && !APP_DEMO_MODE) {
+        void getMeta<boolean>('auth-logout-pending', false).then(async (pending) => {
+          if (!pending) return
+          const response = await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin', cache: 'no-store' }).catch(() => null)
+          if (response?.ok) await db.appMeta.delete('auth-logout-pending')
+        })
+      }
+    }
     window.addEventListener('online', updateOnline)
     window.addEventListener('offline', updateOnline)
     const installListener = (event: Event) => {
@@ -300,7 +349,7 @@ export function PosApp() {
   const categories = useMemo(() => ['All items', ...Array.from(new Set(products.map((product) => product.categoryName))).sort()], [products])
   const filteredProducts = useMemo(() => products.filter((product) => {
     const term = search.trim().toLowerCase()
-    const matchesTerm = !term || `${product.name} ${product.sku} ${product.categoryName}`.toLowerCase().includes(term)
+    const matchesTerm = !term || `${product.name} ${product.sku} ${product.barcode ?? ''} ${product.categoryName}`.toLowerCase().includes(term)
     const matchesCategory = activeCategory === 'All items' || product.categoryName === activeCategory
     return matchesTerm && matchesCategory
   }), [products, search, activeCategory])
@@ -329,6 +378,8 @@ export function PosApp() {
     setSyncBusy(true)
     try {
       const result = await syncNow()
+      const syncedShopName = await getMeta<string>('shop-name', shopName)
+      if (syncedShopName) { setShopName(syncedShopName); setShopNameDraft(syncedShopName) }
       await refreshLocalState()
       if (result.pushed.conflicts?.length) showToast(`${result.pushed.conflicts.length} change(s) need review. Inventory counts are never silently overwritten.`, 'error')
       else if (!quiet) showToast(`Sync complete · ${result.pushed.sent} change(s) sent.`, 'success')
@@ -337,7 +388,7 @@ export function PosApp() {
     } finally {
       setSyncBusy(false)
     }
-  }, [cloudSignedIn, online, refreshLocalState, showToast, syncBusy])
+  }, [cloudSignedIn, online, refreshLocalState, showToast, shopName, syncBusy])
 
   useEffect(() => {
     if (!cloudSignedIn || APP_DEMO_MODE || !online) return
@@ -352,17 +403,6 @@ export function PosApp() {
     void syncData(true)
   }, [cloudSignedIn, online, pendingCount])
 
-  useEffect(() => {
-    if (!cloudSignedIn || APP_DEMO_MODE || !employee) return
-    const client = getBrowserSupabase()
-    if (!client) return
-    const channel = client.channel(`pos-store-${employee.storeId}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'products', filter: `store_id=eq.${employee.storeId}` }, () => { void syncData(true) })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'inventory', filter: `store_id=eq.${employee.storeId}` }, () => { void syncData(true) })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders', filter: `store_id=eq.${employee.storeId}` }, () => { void syncData(true) })
-      .subscribe()
-    return () => { void client.removeChannel(channel) }
-  }, [cloudSignedIn, employee, syncData])
 
   const setEmployeeSession = useCallback(async (selected: Employee) => {
     await finishLogin(selected)
@@ -371,24 +411,27 @@ export function PosApp() {
 
   const signInCloud = useCallback(async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    const supabase = getBrowserSupabase()
-    if (!supabase) { setLoginError('Cloud sign-in is not configured. Use demo mode or complete .env.local setup.'); return }
     setLoginBusy(true)
     setLoginError('')
+    setAuthNotice('')
     try {
-      const { error } = await supabase.auth.signInWithPassword({ email: loginEmail.trim(), password: loginPassword })
-      if (error) throw new Error(error.message)
-      const token = await getAccessToken()
-      if (!token) throw new Error('Sign-in did not create a session.')
-      const response = await fetch('/api/auth/session', { headers: { authorization: `Bearer ${token}` }, cache: 'no-store' })
-      const data = await response.json() as { error?: string; employee?: Employee }
-      if (!response.ok || !data.employee) throw new Error(data.error || 'This login is not linked to a POS employee.')
+      const response = await fetch('/api/auth/login', {
+        method: 'POST', headers: { 'content-type': 'application/json' }, credentials: 'same-origin',
+        body: JSON.stringify({ email: loginEmail.trim(), password: loginPassword }), cache: 'no-store',
+      })
+      const result = await response.json() as { error?: string }
+      if (!response.ok) throw new Error(result.error || 'Sign-in failed. Check your email and password.')
+      await db.appMeta.delete('auth-logout-pending')
+      const profileResponse = await fetch('/api/auth/session', { credentials: 'same-origin', cache: 'no-store' })
+      const data = await profileResponse.json() as { error?: string; employee?: Employee }
+      if (!profileResponse.ok || !data.employee) throw new Error(data.error || 'This login is not linked to an active POS employee.')
       await db.employees.put(data.employee)
       await setMeta('cached-employee', data.employee)
       setEmployee(data.employee)
       setCachedOfflineEmployee(null)
       setCloudSignedIn(true)
       setLoginPassword('')
+      setAuthMode('signin')
       await pullCloud()
       await refreshLocalState()
       showToast(`Welcome, ${data.employee.displayName}.`, 'success')
@@ -399,6 +442,123 @@ export function PosApp() {
     }
   }, [loginEmail, loginPassword, refreshLocalState, showToast])
 
+  const registerOwner = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setLoginBusy(true)
+    setLoginError('')
+    setAuthNotice('')
+    try {
+      const response = await fetch('/api/auth/register', {
+        method: 'POST', headers: { 'content-type': 'application/json' }, credentials: 'same-origin',
+        body: JSON.stringify({ storeName: registerStoreName, displayName: registerOwnerName, email: loginEmail.trim(), password: registerPassword }),
+        cache: 'no-store',
+      })
+      const data = await response.json() as { error?: string; message?: string }
+      if (!response.ok) throw new Error(data.error || 'Store account could not be created.')
+      setAuthNotice(data.message || 'Check your inbox for an email verification link.')
+      setAuthMode('signin')
+      setLoginPassword('')
+      setRegisterPassword('')
+    } catch (error) {
+      setLoginError(error instanceof Error ? error.message : 'Registration failed. Please retry.')
+    } finally {
+      setLoginBusy(false)
+    }
+  }
+
+  const requestPasswordReset = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setLoginBusy(true)
+    setLoginError('')
+    setAuthNotice('')
+    try {
+      const response = await fetch('/api/auth/password/forgot', {
+        method: 'POST', headers: { 'content-type': 'application/json' }, credentials: 'same-origin',
+        body: JSON.stringify({ email: loginEmail.trim() }), cache: 'no-store',
+      })
+      const data = await response.json() as { error?: string; message?: string }
+      if (!response.ok) throw new Error(data.error || 'Password-reset email could not be requested.')
+      setAuthNotice(data.message || 'If an active account matches that address, a password-reset link has been sent.')
+      setAuthMode('signin')
+    } catch (error) {
+      setLoginError(error instanceof Error ? error.message : 'Password reset could not be requested.')
+    } finally {
+      setLoginBusy(false)
+    }
+  }
+
+  const resendVerification = async () => {
+    setLoginBusy(true)
+    setLoginError('')
+    setAuthNotice('')
+    try {
+      const response = await fetch('/api/auth/verification/resend', {
+        method: 'POST', headers: { 'content-type': 'application/json' }, credentials: 'same-origin',
+        body: JSON.stringify({ email: loginEmail.trim() }), cache: 'no-store',
+      })
+      const data = await response.json() as { error?: string; message?: string }
+      if (!response.ok) throw new Error(data.error || 'Verification email could not be sent.')
+      setAuthNotice(data.message || 'If verification is needed, a fresh link has been sent.')
+    } catch (error) {
+      setLoginError(error instanceof Error ? error.message : 'Verification email could not be sent.')
+    } finally {
+      setLoginBusy(false)
+    }
+  }
+
+  const completePasswordReset = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setLoginBusy(true)
+    setLoginError('')
+    setAuthNotice('')
+    try {
+      const response = await fetch('/api/auth/password/reset', {
+        method: 'POST', headers: { 'content-type': 'application/json' }, credentials: 'same-origin',
+        body: JSON.stringify({ token: resetToken, password: resetPassword }), cache: 'no-store',
+      })
+      const data = await response.json() as { error?: string; message?: string }
+      if (!response.ok) throw new Error(data.error || 'Password could not be changed.')
+      setAuthNotice(data.message || 'Password changed. Sign in with your new password.')
+      setResetPassword('')
+      setResetToken('')
+      setAuthMode('signin')
+    } catch (error) {
+      setLoginError(error instanceof Error ? error.message : 'Password could not be changed.')
+    } finally {
+      setLoginBusy(false)
+    }
+  }
+
+  const acceptStaffInvite = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setLoginBusy(true)
+    setLoginError('')
+    setAuthNotice('')
+    try {
+      const response = await fetch('/api/auth/accept-invite', {
+        method: 'POST', headers: { 'content-type': 'application/json' }, credentials: 'same-origin',
+        body: JSON.stringify({ token: inviteToken, password: invitePassword }), cache: 'no-store',
+      })
+      const data = await response.json() as { error?: string; employee?: Employee }
+      if (!response.ok || !data.employee) throw new Error(data.error || 'Invitation could not be accepted.')
+      await db.appMeta.delete('auth-logout-pending')
+      await db.employees.put(data.employee)
+      await setMeta('cached-employee', data.employee)
+      setEmployee(data.employee)
+      setCachedOfflineEmployee(null)
+      setCloudSignedIn(true)
+      setInviteToken('')
+      setInvitePassword('')
+      await pullCloud().catch(() => undefined)
+      await refreshLocalState()
+      showToast(`Welcome to ${data.employee.displayName}'s Kasa POS team.`, 'success')
+    } catch (error) {
+      setLoginError(error instanceof Error ? error.message : 'Invitation could not be accepted.')
+    } finally {
+      setLoginBusy(false)
+    }
+  }
+
   const signOut = useCallback(async () => {
     if (APP_DEMO_MODE) {
       setEmployee(null)
@@ -407,8 +567,17 @@ export function PosApp() {
       return
     }
     const employeeToClear = employee ?? cachedOfflineEmployee
-    const supabase = getBrowserSupabase()
-    await supabase?.auth.signOut({ scope: 'local' }).catch(() => undefined)
+    if (online) {
+      try {
+        const response = await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin', cache: 'no-store' })
+        if (!response.ok) await setMeta('auth-logout-pending', true)
+        else await db.appMeta.delete('auth-logout-pending')
+      } catch {
+        await setMeta('auth-logout-pending', true)
+      }
+    } else {
+      await setMeta('auth-logout-pending', true)
+    }
     if (employeeToClear) await clearOfflinePin(employeeToClear.id)
     await db.appMeta.delete('cached-employee')
     setCloudSignedIn(false)
@@ -417,8 +586,10 @@ export function PosApp() {
     setOfflinePinAvailable(false)
     setOfflinePinInput('')
     setLoginPassword('')
+    setAuthMode('signin')
     setModal(null)
-  }, [cachedOfflineEmployee, employee])
+    if (!online) showToast('Signed out on this device. Server-session revocation will complete when this device reconnects.', 'plain')
+  }, [cachedOfflineEmployee, employee, online, showToast])
 
   const unlockOffline = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -495,6 +666,7 @@ export function PosApp() {
   }
 
   const startDigitalPayment = async () => {
+    if (CASH_ONLY_CHECKOUT) { showToast('This store is configured for cash-only sales.', 'error'); return }
     if (!employee || !activeShift || (paymentMethod !== 'card' && paymentMethod !== 'momo')) return
     if (!APP_DEMO_MODE && !paymentConsent) { showToast('Confirm that the customer agreed to payment-contact processing before continuing.', 'error'); return }
     let requestContext: PendingPayment | null = null
@@ -526,14 +698,9 @@ export function PosApp() {
         setPendingPayment((value) => value ? { ...value, retryable: true, message: 'The pending sale is safely stored here, but cloud sync did not acknowledge it. No charge request was sent.' } : value)
         return
       }
-      const token = await getAccessToken()
-      if (!token) {
-        setPendingPayment((value) => value ? { ...value, retryable: true, message: 'Sign in to cloud before a real card or mobile-money request can be sent. The sale remains pending.' } : value)
-        return
-      }
-      await recordPrivacyConsent('digital_payment_contact', pending.order.id, token)
+      await recordPrivacyConsent('digital_payment_contact', pending.order.id)
       const response = await fetch('/api/payments/paystack/initialize', {
-        method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+        method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ orderId: pending.order.id, paymentId: pending.payment.id, email: customerEmail.trim(), phone: customerPhone.trim(), network: momoNetwork }),
       })
       const data = await response.json() as { error?: string; reference?: string; authorizationUrl?: string; displayText?: string; message?: string; providerStatus?: string }
@@ -574,10 +741,8 @@ export function PosApp() {
     if (!current.reference || !online || !cloudSignedIn || APP_DEMO_MODE || paymentChecking) return
     setPaymentChecking(true)
     try {
-      const token = await getAccessToken()
-      if (!token) throw new Error('Sign in again to check provider status.')
       const response = await fetch('/api/payments/paystack/verify', {
-        method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+        method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ orderId: current.orderId, reference: current.reference }), cache: 'no-store',
       })
       const data = await response.json() as { error?: string; paid?: boolean; providerStatus?: string; message?: string; transactionId?: string }
@@ -630,11 +795,9 @@ export function PosApp() {
       await syncData(true)
       const outboxEvent = await db.syncOutbox.where('entityId').equals(current.orderId).first()
       if (outboxEvent && outboxEvent.status !== 'synced') throw new Error('The pending sale has not synced to cloud; no provider request was sent.')
-      const token = await getAccessToken()
-      if (!token) throw new Error('Sign in again before requesting a digital payment.')
-      await recordPrivacyConsent('digital_payment_contact', current.orderId, token)
+      await recordPrivacyConsent('digital_payment_contact', current.orderId)
       const response = await fetch('/api/payments/paystack/initialize', {
-        method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+        method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ orderId: current.orderId, paymentId: current.paymentId, email: customerEmail.trim(), phone: customerPhone.trim(), network: momoNetwork }),
       })
       const data = await response.json() as { error?: string; reference?: string; authorizationUrl?: string; displayText?: string; message?: string; providerStatus?: string }
@@ -683,7 +846,7 @@ export function PosApp() {
   }, [pendingPayment, online, cloudSignedIn, modal, verifyPendingPayment])
 
   useEffect(() => {
-    if (!employee || APP_DEMO_MODE || callbackHandled.current || typeof window === 'undefined') return
+    if (!employee || APP_DEMO_MODE || CASH_ONLY_CHECKOUT || callbackHandled.current || typeof window === 'undefined') return
     const params = new URLSearchParams(window.location.search)
     if (params.get('payment') !== 'return') return
     const orderId = params.get('order')
@@ -706,6 +869,21 @@ export function PosApp() {
     setCart((current) => ({ ...current, [product.id]: (current[product.id] ?? 0) + 1 }))
     const stock = inventory.find((item) => item.productId === product.id)?.quantityOnHand ?? 0
     if (stock <= 0) showToast(`${product.name} is at zero on this device. Check stock before confirming a sale.`, 'plain')
+  }
+  const handleBarcodeScan = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key !== 'Enter' && event.key !== 'Tab') return
+    const code = scanInput.trim()
+    if (!code) return
+    event.preventDefault()
+    const match = findProductByScanCode(products, code)
+    setScanInput('')
+    if (!match) {
+      showToast(`No active product matches barcode/SKU “${code}”. Add it in Products first.`, 'error')
+      return
+    }
+    const stock = inventory.find((item) => item.productId === match.id)?.quantityOnHand ?? 0
+    addProductToCart(match)
+    if (stock > 0) showToast(`${match.name} added to the cart.`, 'success')
   }
   const setQuantity = (productId: string, quantity: number) => setCart((current) => {
     const next = { ...current }
@@ -779,9 +957,8 @@ export function PosApp() {
           await syncData(true)
           const cloudEvent = await db.syncOutbox.where('entityId').equals(result.refund.id).first()
           if (cloudEvent?.status === 'synced') {
-            const token = await getAccessToken()
-            const response = await fetch('/api/refunds/paystack', {
-              method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+                  const response = await fetch('/api/refunds/paystack', {
+              method: 'POST', headers: { 'content-type': 'application/json' },
               body: JSON.stringify({ refundId: result.refund.id }), cache: 'no-store',
             })
             const data = await response.json() as { error?: string; status?: string; providerRefundId?: string; message?: string }
@@ -812,9 +989,8 @@ export function PosApp() {
   const checkRefundProvider = async (refund: Refund) => {
     if (APP_DEMO_MODE || !online || !cloudSignedIn) { showToast('Provider status check requires an online signed-in cloud session.', 'plain'); return }
     try {
-      const token = await getAccessToken()
       const response = await fetch('/api/refunds/paystack/status', {
-        method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+        method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ refundId: refund.id }), cache: 'no-store',
       })
       const data = await response.json() as { error?: string; status?: string; providerRefundId?: string; message?: string }
@@ -826,14 +1002,42 @@ export function PosApp() {
     } catch (error) { showToast(error instanceof Error ? error.message : 'Refund status could not be checked.', 'error') }
   }
 
+  const saveShopProfile = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!employee || employee.role !== 'owner') { showToast('Only a store owner can change receipt branding.', 'error'); return }
+    const name = shopNameDraft.trim()
+    if (name.length < 2 || name.length > 120) { showToast('Shop name must be between 2 and 120 characters.', 'error'); return }
+    setShopNameSaving(true)
+    try {
+      let savedName = name
+      if (!APP_DEMO_MODE) {
+        const response = await fetch('/api/store/profile', {
+          method: 'PATCH', headers: { 'content-type': 'application/json' }, credentials: 'same-origin',
+          body: JSON.stringify({ name }), cache: 'no-store',
+        })
+        const data = await response.json() as { error?: string; store?: { name?: string } }
+        if (!response.ok || !data.store?.name) throw new Error(data.error || 'Shop name could not be saved.')
+        savedName = data.store.name
+      }
+      setShopName(savedName)
+      setShopNameDraft(savedName)
+      await setMeta('shop-name', savedName)
+      showToast('Shop name saved. It will appear on receipts created or reprinted on this store.', 'success')
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Shop name could not be saved.', 'error')
+    } finally {
+      setShopNameSaving(false)
+    }
+  }
+
   const openProductEditor = (product?: Product) => {
     if (!isManager) return showToast('Product changes require a manager or owner.', 'error')
     setProductForm(product ? {
-      id: product.id, name: product.name, sku: product.sku, categoryName: product.categoryName,
+      id: product.id, name: product.name, sku: product.sku, barcode: product.barcode ?? '', categoryName: product.categoryName,
       taxCategoryId: product.taxCategoryId, price: inputFromMinor(product.priceMinor), priceMode: product.priceMode,
       stock: String(inventory.find((item) => item.productId === product.id)?.quantityOnHand ?? 0), active: product.active,
     } : {
-      name: '', sku: '', categoryName: categories[1] && categories[1] !== 'All items' ? categories[1] : 'Groceries',
+      name: '', sku: '', barcode: '', categoryName: categories[1] && categories[1] !== 'All items' ? categories[1] : 'Groceries',
       taxCategoryId: taxCategories[0]?.id ?? '', price: '', priceMode: 'inclusive', stock: '0', active: true,
     })
     setModal('product')
@@ -851,14 +1055,14 @@ export function PosApp() {
         const previous = products.find((product) => product.id === productForm.id)
         if (!previous) throw new Error('Product is no longer available on this device.')
         const updated: Product = {
-          ...previous, name: productForm.name.trim(), sku: productForm.sku.trim(), categoryName: productForm.categoryName.trim(),
+          ...previous, name: productForm.name.trim(), sku: productForm.sku.trim(), barcode: productForm.barcode.trim() || undefined, categoryName: productForm.categoryName.trim(),
           taxCategoryId: tax.id, priceMinor, priceMode: productForm.priceMode, active: productForm.active,
         }
         await saveProduct(updated, employee, previous)
         const oldStock = inventory.find((item) => item.productId === previous.id)?.quantityOnHand ?? 0
         if (oldStock !== openingStock) await adjustInventory({ product: updated, employee, newQuantity: openingStock, reason: 'Product editor count adjustment' })
       } else {
-        await addNewProduct({ name: productForm.name, sku: productForm.sku, categoryName: productForm.categoryName, taxCategory: tax, priceMinor, priceMode: productForm.priceMode, stock: openingStock, employee })
+        await addNewProduct({ name: productForm.name, sku: productForm.sku, barcode: productForm.barcode, categoryName: productForm.categoryName, taxCategory: tax, priceMinor, priceMode: productForm.priceMode, stock: openingStock, employee })
       }
       setModal(null)
       setProductForm(null)
@@ -954,20 +1158,29 @@ export function PosApp() {
   }
 
   const openEmployeeForm = (person?: Employee) => {
-    if (!isManager) return
+    if (APP_DEMO_MODE ? !isManager : employee?.role !== 'owner') return
     setEmployeeForm(person ? {
-      id: person.id, displayName: person.displayName, role: person.role,
+      id: person.id, displayName: person.displayName, email: person.email ?? '', role: person.role,
       refundLimit: person.refundLimitMinor === null ? '' : inputFromMinor(person.refundLimitMinor ?? 0),
-    } : { displayName: '', role: 'cashier', refundLimit: '0.00' })
+    } : { displayName: '', email: '', role: 'cashier', refundLimit: '0.00' })
     setModal('employee')
   }
 
   const saveEmployeeForm = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     if (!employee || !employeeForm) return
-    if (employee.role === 'manager' && employeeForm.role === 'owner') { showToast('Only an owner can grant the owner role.', 'error'); return }
-    if (employee.role === 'manager' && employeeForm.id && employees.find((person) => person.id === employeeForm.id)?.role === 'owner') { showToast('Managers cannot edit an owner profile.', 'error'); return }
     const existing = employeeForm.id ? employees.find((person) => person.id === employeeForm.id) : undefined
+    if (!APP_DEMO_MODE && employee.role !== 'owner') { showToast('Only the store owner can invite staff or change roles.', 'error'); return }
+    if (employee.role === 'manager' && employeeForm.role === 'owner') { showToast('Only an owner can grant the owner role.', 'error'); return }
+    if (employee.role === 'manager' && employeeForm.id && existing?.role === 'owner') { showToast('Managers cannot edit an owner profile.', 'error'); return }
+    if (!APP_DEMO_MODE && (!online || !cloudSignedIn)) { showToast('Staff invitations and role changes require an online owner session.', 'error'); return }
+    const displayName = employeeForm.displayName.trim()
+    const email = (employeeForm.email ?? '').trim().toLowerCase()
+    if (!displayName) return showToast('Enter a staff name.', 'error')
+    if (!APP_DEMO_MODE && (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))) return showToast('Enter the staff member’s email address for their invitation.', 'error')
+    if (!APP_DEMO_MODE && !existing && employeeForm.role === 'owner') return showToast('Owner accounts are created through store-owner registration. Invite staff as manager or cashier.', 'error')
+    if (!APP_DEMO_MODE && existing?.status === 'invited' && employeeForm.role === 'owner') return showToast('Staff invitations may grant manager or cashier access only.', 'error')
+
     const previousLimit = existing ? (existing.refundLimitMinor === undefined ? 0 : existing.refundLimitMinor) : 0
     if (employee.role === 'owner' && !employeeForm.refundLimit.trim() && employeeForm.role !== 'owner') {
       showToast('Only an owner profile may have no per-transaction refund cap; set a finite limit for staff.', 'error')
@@ -980,44 +1193,49 @@ export function PosApp() {
       showToast('Enter a valid non-negative refund limit in GHS, or leave it blank for no cap on an owner profile.', 'error')
       return
     }
+    const nowIso = new Date().toISOString()
     const saved: Employee = {
-      id: employeeForm.id ?? newId(), storeId: employee.storeId, displayName: employeeForm.displayName.trim(),
-      role: employeeForm.role, refundLimitMinor: proposedLimit, status: 'active', createdAt: new Date().toISOString(),
-    }
-    if (!saved.displayName) return showToast('Enter a staff name.', 'error')
-    const refundLimitChanged = employee.role === 'owner' && proposedLimit !== previousLimit
-    if (refundLimitChanged && !APP_DEMO_MODE && (!online || !cloudSignedIn)) {
-      showToast('Changing refund limits requires an online owner cloud session; no limit change was saved.', 'error')
-      return
+      id: employeeForm.id ?? newId(), storeId: employee.storeId, authUserId: existing?.authUserId,
+      displayName, email: email || existing?.email, role: employeeForm.role,
+      refundLimitMinor: proposedLimit, status: 'active', createdAt: existing?.createdAt ?? nowIso,
     }
     try {
-      const saveLimitToCloud = async () => {
-        const token = await getAccessToken()
-        if (!token) throw new Error('Sign in again before saving a refund limit.')
-        const response = await fetch('/api/employees/refund-limit', {
-          method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
-          body: JSON.stringify({ employeeId: saved.id, refundLimitMinor: proposedLimit }), cache: 'no-store',
+      if (APP_DEMO_MODE) {
+        const syncEvent = await saveEmployee(saved, employee)
+        if (syncEvent) await db.syncOutbox.update(syncEvent.eventId, { status: 'synced' })
+        await db.employees.put(saved)
+        setModal(null)
+        await refreshLocalState()
+        showToast('Demo staff profile saved locally.', 'success')
+        return
+      }
+
+      if (!existing || existing.status === 'invited') {
+        const response = await fetch('/api/auth/invites', {
+          method: 'POST', headers: { 'content-type': 'application/json' }, credentials: 'same-origin',
+          body: JSON.stringify({ displayName, email, role: employeeForm.role, refundLimitMinor: proposedLimit ?? 0 }), cache: 'no-store',
         })
-        const data = await response.json() as { error?: string }
-        if (!response.ok) throw new Error(data.error || 'Refund limit could not be saved in cloud.')
+        const data = await response.json() as { error?: string; employee?: Employee }
+        if (!response.ok || !data.employee) throw new Error(data.error || 'Staff invitation could not be sent.')
+        await db.employees.put(data.employee)
+        await pullCloud().catch(() => undefined)
+        setModal(null)
+        await refreshLocalState()
+        showToast(existing ? 'A fresh staff invitation was sent.' : `Invitation sent to ${email}.`, 'success')
+        return
       }
-      // Set a finite limit before changing an existing uncapped owner to staff so the
-      // database's owner-only NULL constraint is never transiently violated.
-      if (refundLimitChanged && existing && proposedLimit !== null && !APP_DEMO_MODE) await saveLimitToCloud()
-      const syncEvent = await saveEmployee(saved, employee)
-      if (!APP_DEMO_MODE && online && cloudSignedIn) {
-        await syncNow()
-        const eventStatus = await db.syncOutbox.get(syncEvent.eventId)
-        if (eventStatus?.status !== 'synced') throw new Error('Employee profile remains queued or needs review; the change was not confirmed by cloud sync.')
-        // New profiles must exist in cloud before their owner-authorized ceiling can be written.
-        if (refundLimitChanged && (!existing || proposedLimit === null)) {
-          await saveLimitToCloud()
-          await pullCloud()
-        }
-      }
+
+      const response = await fetch('/api/employees/role', {
+        method: 'POST', headers: { 'content-type': 'application/json' }, credentials: 'same-origin',
+        body: JSON.stringify({ employeeId: existing.id, displayName, role: employeeForm.role, refundLimitMinor: proposedLimit }), cache: 'no-store',
+      })
+      const data = await response.json() as { error?: string }
+      if (!response.ok) throw new Error(data.error || 'Employee role could not be saved.')
+      await db.employees.put(saved)
+      await pullCloud().catch(() => undefined)
       setModal(null)
       await refreshLocalState()
-      showToast('Staff role and refund authorization saved. A Supabase Auth login must be linked separately for cloud access.', 'success')
+      showToast('Staff role and refund authorization saved.', 'success')
     } catch (error) { showToast(error instanceof Error ? error.message : 'Staff profile could not be saved.', 'error') }
   }
 
@@ -1034,23 +1252,21 @@ export function PosApp() {
     if (!receiptOrder || !receiptEmail.trim()) { showToast('Enter a recipient email address.', 'error'); return }
     if (!receiptConsent) { showToast('Confirm that the customer asked to receive this receipt by email.', 'error'); return }
     if (APP_DEMO_MODE || !cloudSignedIn) {
-      await shareReceipt(receiptOrder, receiptRefund ?? undefined)
+      await shareReceipt(receiptOrder, receiptRefund ?? undefined, shopName)
       showToast('Opened the device share sheet or downloaded a PDF. Managed email delivery is not configured in demo mode.', 'plain')
       return
     }
     try {
-      const token = await getAccessToken()
-      if (!token) throw new Error('Sign in again before sending a managed email receipt.')
-      await recordPrivacyConsent('receipt_email', receiptOrder.id, token)
+      await recordPrivacyConsent('receipt_email', receiptOrder.id)
       const response = await fetch('/api/receipts/email', {
-        method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+        method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ orderId: receiptOrder.id, email: receiptEmail.trim() }), cache: 'no-store',
       })
       const data = await response.json() as { error?: string }
       if (!response.ok) throw new Error(data.error || 'Email could not be sent.')
       showToast(`Receipt sent to ${receiptEmail.trim()}.`, 'success')
     } catch (error) {
-      await shareReceipt(receiptOrder, receiptRefund ?? undefined).catch(() => undefined)
+      await shareReceipt(receiptOrder, receiptRefund ?? undefined, shopName).catch(() => undefined)
       showToast(`${error instanceof Error ? error.message : 'Email failed.'} Opened share/PDF fallback.`, 'error')
     }
   }
@@ -1058,7 +1274,7 @@ export function PosApp() {
   const printThermal = async (transport: 'bluetooth' | 'usb') => {
     if (!receiptOrder) return
     try {
-      const name = await printReceiptEscPos(receiptOrder, transport)
+      const name = await printReceiptEscPos(receiptOrder, transport, shopName)
       showToast(`Sent receipt to ${name}. Check the printed paper; browser printer APIs cannot verify a complete print.`, 'success')
     } catch (error) {
       showToast(`${error instanceof Error ? error.message : 'Printer connection failed.'} Use Print or PDF fallback.`, 'error')
@@ -1082,8 +1298,8 @@ export function PosApp() {
       <main className="login-screen">
         <section className="login-card">
           <div className="login-brand"><span className="brand-mark">K</span><div><strong className="brand-name">Kasa POS</strong><span className="brand-caption">Offline-first retail checkout</span></div></div>
-          <h1>{APP_DEMO_MODE ? 'Choose a demo role' : 'Sign in to your store'}</h1>
-          <p>{APP_DEMO_MODE ? 'Explore checkout, stock, refunds and reports with local demo data. Demo role switching is not an authentication control.' : 'Use your store Supabase Auth account. After the first sign-in, cached catalogue and recent records can be opened offline on this device.'}</p>
+          <h1>{APP_DEMO_MODE ? 'Choose a demo role' : authMode === 'register' ? 'Create a store account' : authMode === 'forgot' ? 'Recover your password' : authMode === 'reset' ? 'Set a new password' : authMode === 'accept-invite' ? 'Accept staff invitation' : 'Sign in to your store'}</h1>
+          <p>{APP_DEMO_MODE ? 'Explore checkout, stock, refunds and reports with local demo data. Demo role switching is not an authentication control.' : 'Kasa POS accounts are protected by D1-backed sessions. After your first sign-in, this device can unlock a cached workspace offline.'}</p>
           {APP_DEMO_MODE ? <>
             <div className="info-note"><strong>Demo only.</strong> Cash can be recorded locally. Card/MoMo buttons are explicitly simulated and do not contact a provider or move money.</div>
             <div className="demo-user-list">
@@ -1100,13 +1316,38 @@ export function PosApp() {
                 <div className="field full"><button className="btn primary" disabled={loginBusy || offlinePinInput.length < 6}>{loginBusy ? <Loader2 size={14} className="spin" /> : <WifiOff size={14} />}{loginBusy ? 'Unlocking…' : 'Unlock offline workspace'}</button></div>
               </form> : <div className="attention-note" style={{ marginTop: 12 }}><AlertTriangle size={15} />No offline PIN is registered for this staff profile. Reconnect and sign in to create one before using this profile offline.</div>}
               <div className="field-hint" style={{ marginTop: 8 }}>Offline PIN is a device unlock, not cloud authentication. Keep the tablet’s screen lock enabled; local POS data is stored in browser storage.</div>
-            </> : <form onSubmit={signInCloud} className="form-grid" style={{ marginTop: 15 }}>
+            </>  : (authMode === 'register' ? <form onSubmit={registerOwner} className="form-grid" style={{ marginTop: 15 }}>
+              <div className="field full"><label htmlFor="register-store">Store name</label><input id="register-store" autoComplete="organization" maxLength={120} value={registerStoreName} onChange={(event) => setRegisterStoreName(event.target.value)} required /></div>
+              <div className="field full"><label htmlFor="register-owner">Owner name</label><input id="register-owner" autoComplete="name" maxLength={100} value={registerOwnerName} onChange={(event) => setRegisterOwnerName(event.target.value)} required /></div>
+              <div className="field full"><label htmlFor="register-email">Owner email</label><input id="register-email" type="email" autoComplete="email" value={loginEmail} onChange={(event) => setLoginEmail(event.target.value)} required /></div>
+              <div className="field full"><label htmlFor="register-password">Password</label><input id="register-password" type="password" autoComplete="new-password" minLength={12} maxLength={128} value={registerPassword} onChange={(event) => setRegisterPassword(event.target.value)} required /><span className="field-hint">Use at least 12 characters. Passwords are stored as bcrypt hashes, never in plaintext.</span></div>
+              {authNotice && <div className="field full"><div className="info-note">{authNotice}</div></div>}
+              {loginError && <div className="field full"><div className="attention-note"><AlertTriangle size={15} />{loginError}</div></div>}
+              <div className="field full"><button className="btn primary" disabled={loginBusy || !online}>{loginBusy ? <Loader2 size={14} className="spin" /> : <UserPlus size={14} />}{loginBusy ? 'Creating store…' : 'Create owner account'}</button><button type="button" className="link-button" style={{ marginTop: 8 }} onClick={() => { setAuthMode('signin'); setLoginError(''); setAuthNotice('') }}>Already have an account? Sign in</button></div>
+            </form> : authMode === 'forgot' ? <form onSubmit={requestPasswordReset} className="form-grid" style={{ marginTop: 15 }}>
+              <div className="field full"><label htmlFor="forgot-email">Account email</label><input id="forgot-email" type="email" autoComplete="email" value={loginEmail} onChange={(event) => setLoginEmail(event.target.value)} required /></div>
+              {authNotice && <div className="field full"><div className="info-note">{authNotice}</div></div>}
+              {loginError && <div className="field full"><div className="attention-note"><AlertTriangle size={15} />{loginError}</div></div>}
+              <div className="field full"><button className="btn primary" disabled={loginBusy || !online}>{loginBusy ? <Loader2 size={14} className="spin" /> : <Mail size={14} />}{loginBusy ? 'Sending…' : 'Send reset link'}</button><button type="button" className="link-button" style={{ marginTop: 8 }} onClick={() => { setAuthMode('signin'); setLoginError(''); setAuthNotice('') }}>Back to sign in</button></div>
+            </form> : authMode === 'reset' ? <form onSubmit={completePasswordReset} className="form-grid" style={{ marginTop: 15 }}>
+              <div className="field full"><label htmlFor="reset-password">New password</label><input id="reset-password" type="password" autoComplete="new-password" minLength={12} maxLength={128} value={resetPassword} onChange={(event) => setResetPassword(event.target.value)} required /><span className="field-hint">Use at least 12 characters. Reset links expire after 30 minutes.</span></div>
+              {loginError && <div className="field full"><div className="attention-note"><AlertTriangle size={15} />{loginError}</div></div>}
+              <div className="field full"><button className="btn primary" disabled={loginBusy || !online}>{loginBusy ? <Loader2 size={14} className="spin" /> : <ShieldCheck size={14} />}{loginBusy ? 'Updating…' : 'Set new password'}</button><button type="button" className="link-button" style={{ marginTop: 8 }} onClick={() => { setAuthMode('signin'); setResetToken(''); setLoginError('') }}>Back to sign in</button></div>
+            </form> : authMode === 'accept-invite' ? <form onSubmit={acceptStaffInvite} className="form-grid" style={{ marginTop: 15 }}>
+              <div className="field full"><div className="info-note">You have a Kasa POS staff invitation. Set a password to activate the owner-issued cashier or manager profile.</div></div>
+              <div className="field full"><label htmlFor="invite-password">Create password</label><input id="invite-password" type="password" autoComplete="new-password" minLength={12} maxLength={128} value={invitePassword} onChange={(event) => setInvitePassword(event.target.value)} required /><span className="field-hint">Use at least 12 characters. This invitation expires after 7 days.</span></div>
+              {loginError && <div className="field full"><div className="attention-note"><AlertTriangle size={15} />{loginError}</div></div>}
+              <div className="field full"><button className="btn primary" disabled={loginBusy || !online}>{loginBusy ? <Loader2 size={14} className="spin" /> : <ShieldCheck size={14} />}{loginBusy ? 'Activating…' : 'Accept invitation'}</button></div>
+            </form> : <form onSubmit={signInCloud} className="form-grid" style={{ marginTop: 15 }}>
+              {authNotice && <div className="field full"><div className="info-note">{authNotice}</div></div>}
               <div className="field full"><label htmlFor="login-email">Email</label><input id="login-email" type="email" autoComplete="username" value={loginEmail} onChange={(event) => setLoginEmail(event.target.value)} required /></div>
               <div className="field full"><label htmlFor="login-password">Password</label><input id="login-password" type="password" autoComplete="current-password" value={loginPassword} onChange={(event) => setLoginPassword(event.target.value)} required /></div>
               {loginError && <div className="field full"><div className="attention-note"><AlertTriangle size={15} />{loginError}</div></div>}
               {!online && <div className="field full"><div className="attention-note"><WifiOff size={15} />No cached offline profile is available. Connect to the internet for first-time sign-in.</div></div>}
-              <div className="field full"><button className="btn primary" disabled={loginBusy || !online}>{loginBusy ? <Loader2 size={14} className="spin" /> : <ShieldCheck size={14} />}{loginBusy ? 'Signing in…' : 'Sign in securely'}</button></div>
-            </form>}
+              <div className="field full"><button className="btn primary" disabled={loginBusy || !online}>{loginBusy ? <Loader2 size={14} className="spin" /> : <ShieldCheck size={14} />}{loginBusy ? 'Signing in…' : 'Sign in securely'}</button>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginTop: 10 }}><button type="button" className="link-button" onClick={() => { setAuthMode('forgot'); setLoginError(''); setAuthNotice('') }}>Forgot password?</button><button type="button" className="link-button" onClick={() => { setAuthMode('register'); setLoginError(''); setAuthNotice('') }}>Create a store account</button><button type="button" className="link-button" disabled={loginBusy || !online} onClick={() => void resendVerification()}>Resend verification</button></div>
+              </div>
+            </form>)}
           </>}
           <div className="store-card" style={{ marginTop: 17, borderColor: 'var(--line)', background: '#f8fbf8', color: 'var(--ink-soft)' }}><div className="store-card-title">{onlineLabel}</div><div className="store-card-sub" style={{ color: 'var(--ink-soft)' }}>Your local data is stored in this browser. Do not clear site storage before syncing or backing up records.</div></div>
         </section>
@@ -1143,7 +1384,7 @@ export function PosApp() {
     taxSummary.set(tax.code, existing)
   }
   const filteredOrders = orders.filter((order) => !tableSearch.trim() || `${order.orderNumber} ${order.employeeName} ${order.paymentMethod ?? ''} ${order.status}`.toLowerCase().includes(tableSearch.toLowerCase()))
-  const filteredAdminProducts = products.filter((product) => !tableSearch.trim() || `${product.name} ${product.sku} ${product.categoryName}`.toLowerCase().includes(tableSearch.toLowerCase()))
+  const filteredAdminProducts = products.filter((product) => !tableSearch.trim() || `${product.name} ${product.sku} ${product.barcode ?? ''} ${product.categoryName}`.toLowerCase().includes(tableSearch.toLowerCase()))
   const filteredEmployees = employees.filter((person) => !tableSearch.trim() || `${person.displayName} ${person.role}`.toLowerCase().includes(tableSearch.toLowerCase()))
   const stockRows = products.map((product) => ({ product, item: inventory.find((entry) => entry.productId === product.id) })).sort((a, b) => (a.item?.quantityOnHand ?? 0) - (b.item?.quantityOnHand ?? 0))
   const negativeStockCount = inventory.filter((item) => item.quantityOnHand < 0).length
@@ -1151,16 +1392,16 @@ export function PosApp() {
 
   const renderCheckout = () => (
     <>
-      <SectionHeading title="Checkout" subtitle="Tap a product to add it. The ready cart goes to cash recording or a provider request in at most three taps." actions={isManager ? <button className="btn" onClick={() => openProductEditor()}><Plus size={14} />New product</button> : undefined} />
+      <SectionHeading title="Checkout" subtitle="Tap or scan a product, then record the cash received. Cash is the only enabled tender." actions={isManager ? <button className="btn" onClick={() => openProductEditor()}><Plus size={14} />New product</button> : undefined} />
       <div className="status-strip">
         <span className={`status-pill ${online ? 'good' : 'warn'}`}><span className="status-dot" />{online ? <Wifi size={12} /> : <WifiOff size={12} />}{online ? 'Online' : 'Offline'}</span>
         <span>{APP_DEMO_MODE ? 'Demo data · local only' : cloudSignedIn ? 'Cloud sync enabled' : 'Local mode · sign in to sync'}</span>
         <span className="status-separator" />
         <span className={`status-pill ${reviewCount ? 'bad' : pendingCount ? 'warn' : 'good'}`}><Cloud size={12} />{APP_DEMO_MODE ? 'Cloud not connected' : reviewCount ? `${reviewCount} stock/sync review(s)` : pendingCount ? `${pendingCount} queued` : 'Synced'}</span>
-        {allPendingDigital > 0 && <span className="status-pill warn"><CreditCard size={12} />{allPendingDigital} digital pending</span>}
+        {allPendingDigital > 0 && <span className="status-pill warn"><CreditCard size={12} />{allPendingDigital} legacy non-cash pending</span>}
         {activeShift ? <span className="status-pill blue"><Clock3 size={12} />Shift open · {activeShift.employeeName}</span> : <button className="link-button" onClick={() => { setView('shifts'); openShiftEditor('open') }}>Open shift</button>}
       </div>
-      {APP_DEMO_MODE && <div className="sync-callout" style={{ marginBottom: 12 }}><div><strong>Demo environment — local only</strong><p>Cash transactions are saved in Dexie on this device. Card and MoMo approvals below are clearly simulated; no money moves and no real provider webhook is claimed.</p></div><StatusBadge status="demo_simulated" label="Demo" /></div>}
+      {APP_DEMO_MODE && <div className="sync-callout" style={{ marginBottom: 12 }}><div><strong>Demo environment — local only</strong><p>Cash sales are saved in Dexie on this device. Checkout is cash-only; no payment gateway is configured.</p></div><StatusBadge status="demo_simulated" label="Demo" /></div>}
       {!activeShift && <div className="attention-note" style={{ marginBottom: 12 }}><AlertTriangle size={15} />Open a shift on this device before recording a sale. Cash totals and end-of-shift reconciliation are linked to the open shift.</div>}
       <div className="checkout-layout">
         <section className="panel catalog-panel">
@@ -1169,6 +1410,8 @@ export function PosApp() {
               <div className="search-wrap"><Search className="search-icon" size={14} /><input aria-label="Search products" placeholder="Search product or SKU…" value={search} onChange={(event) => setSearch(event.target.value)} /></div>
               <div className="catalog-tools-right"><button className="btn small" onClick={() => setView('inventory')}><Boxes size={13} /><span className="hide-small">Stock</span></button></div>
             </div>
+            <div className="search-wrap" style={{ marginTop: 9 }}><ScanLine className="search-icon" size={15} /><input aria-label="Scan product barcode" autoComplete="off" autoCapitalize="off" spellCheck={false} placeholder="Scan barcode here · Enter adds item to cart" value={scanInput} onChange={(event) => setScanInput(event.target.value)} onKeyDown={handleBarcodeScan} /></div>
+            <div className="field-hint" style={{ marginTop: 4 }}>USB/Bluetooth scanners that act as a keyboard work here. Click this field, scan, then the scanner’s Enter/Tab suffix adds one item.</div>
             <div className="category-row">{categories.map((category) => <button className={`chip ${activeCategory === category ? 'selected' : ''}`} key={category} onClick={() => setActiveCategory(category)}>{category}</button>)}<span className="catalog-count">{filteredProducts.length} items</span></div>
           </div>
           {filteredProducts.length ? <div className="product-grid">{filteredProducts.map((product) => {
@@ -1195,7 +1438,7 @@ export function PosApp() {
           <div className="cart-bottom">
             <div className="cart-totals"><div className="total-row"><span>Net subtotal</span><strong>{displayMoney(cartTotals.subtotalMinor)}</strong></div><div className="total-row tax"><span>Tax on items</span><strong>{displayMoney(cartTotals.taxMinor)}</strong></div><div className="total-row"><span>Items</span><strong>{cartItemCount}</strong></div><div className="total-grand"><span>Total due</span><strong>{displayMoney(cartTotals.totalMinor)}</strong></div></div>
             <button className="checkout-button" disabled={!cartLines.length || !activeShift} onClick={openPayment}>Checkout <span style={{ float: 'right' }}>{cartLines.length ? `· ${money(cartTotals.totalMinor)}` : ''}</span></button>
-            <div className="cart-footnote">{APP_DEMO_MODE ? 'Demo · local only · no card/MoMo charges' : 'Cash finalizes offline · digital tenders require provider confirmation'}</div>
+            <div className="cart-footnote">{APP_DEMO_MODE ? 'Demo · local only · cash only' : 'Cash only · sales can be recorded offline'}</div>
           </div>
         </aside>
       </div>
@@ -1208,7 +1451,7 @@ export function PosApp() {
       <div className="card">
         <div className="table-toolbar"><div><strong>{orders.length} transactions</strong><div className="subtle" style={{ marginTop: 3, fontSize: 10 }}>Digital payments stay pending until the provider confirms them.</div></div><div className="table-search"><input placeholder="Search receipt, cashier or tender…" value={tableSearch} onChange={(event) => setTableSearch(event.target.value)} /></div></div>
         <div className="table-wrap"><table className="data-table"><thead><tr><th>Receipt</th><th>Date</th><th>Cashier</th><th>Tender</th><th>Payment status</th><th>Tax</th><th>Total</th><th /></tr></thead><tbody>
-          {filteredOrders.map((order) => <tr key={order.id}><td><strong>{order.orderNumber}</strong><div className="subtle" style={{ marginTop: 3 }}>{order.items.length} line(s)</div></td><td>{stamp(order.createdAt)}</td><td>{order.employeeName}</td><td>{order.paymentMethod ? titleCase(order.paymentMethod) : '—'}{order.paymentMethod === 'momo' && order.providerReference && <div className="subtle" style={{ marginTop: 3 }}>{order.providerReference}</div>}</td><td><StatusBadge status={order.paymentStatus ?? order.status} label={order.paymentStatus === 'demo_simulated' ? 'Simulated · demo' : titleCase(order.paymentStatus ?? order.status)} /></td><td>{money(order.taxMinor)}</td><td><strong>{money(order.totalMinor - order.refundedMinor)}</strong></td><td><div className="table-row-actions"><button className="btn small" onClick={() => openReceipt(order)}><ReceiptText size={12} />View</button>{!APP_DEMO_MODE && order.status === 'pending_payment' && order.paymentMethod && order.paymentMethod !== 'cash' && <button className="btn small soft" onClick={() => void inspectPendingOrderPayment(order)}><RefreshCw size={12} />{order.providerReference ? 'Check payment' : 'Continue'}</button>}{employee && (employee.refundLimitMinor === null || (employee.refundLimitMinor ?? 0) > 0) && order.status !== 'refunded' && order.status !== 'pending_payment' && <button className="btn small soft" onClick={() => void beginRefund(order)}><RotateCcw size={12} />Refund</button>}</div></td></tr>)}
+          {filteredOrders.map((order) => <tr key={order.id}><td><strong>{order.orderNumber}</strong><div className="subtle" style={{ marginTop: 3 }}>{order.items.length} line(s)</div></td><td>{stamp(order.createdAt)}</td><td>{order.employeeName}</td><td>{order.paymentMethod ? titleCase(order.paymentMethod) : '—'}{order.paymentMethod === 'momo' && order.providerReference && <div className="subtle" style={{ marginTop: 3 }}>{order.providerReference}</div>}</td><td><StatusBadge status={order.paymentStatus ?? order.status} label={order.paymentStatus === 'demo_simulated' ? 'Simulated · demo' : titleCase(order.paymentStatus ?? order.status)} /></td><td>{money(order.taxMinor)}</td><td><strong>{money(order.totalMinor - order.refundedMinor)}</strong></td><td><div className="table-row-actions"><button className="btn small" onClick={() => openReceipt(order)}><ReceiptText size={12} />View</button>{!CASH_ONLY_CHECKOUT && !APP_DEMO_MODE && order.status === 'pending_payment' && order.paymentMethod && order.paymentMethod !== 'cash' && <button className="btn small soft" onClick={() => void inspectPendingOrderPayment(order)}><RefreshCw size={12} />{order.providerReference ? 'Check payment' : 'Continue'}</button>}{employee && (employee.refundLimitMinor === null || (employee.refundLimitMinor ?? 0) > 0) && order.status !== 'refunded' && order.status !== 'pending_payment' && <button className="btn small soft" onClick={() => void beginRefund(order)}><RotateCcw size={12} />Refund</button>}</div></td></tr>)}
           {!filteredOrders.length && <tr><td colSpan={8}><div className="empty-state"><span className="empty-state-icon"><History size={20} /></span><h3>No matching transactions</h3><p>Completed cash sales and provider-confirmed digital sales will appear here.</p></div></td></tr>}
         </tbody></table></div>
         {APP_DEMO_MODE && <div className="info-note" style={{ marginTop: 12 }}>Demo sample transactions are illustrative. They are not provider-verified payments or certified tax receipts.</div>}
@@ -1219,11 +1462,11 @@ export function PosApp() {
 
   const renderProducts = () => (
     <>
-      <SectionHeading title="Products" subtitle="Manage products, prices, categories and tax treatment. Barcode scanning remains a V2 item." actions={<button className="btn primary" onClick={() => openProductEditor()}><Plus size={14} />Add product</button>} />
-      <div className="card"><div className="table-toolbar"><div><strong>{products.length} active products</strong><div className="subtle" style={{ marginTop: 3, fontSize: 10 }}>Price mode and tax category are snapshotted at the time of sale.</div></div><div className="table-search"><input placeholder="Search product or SKU…" value={tableSearch} onChange={(event) => setTableSearch(event.target.value)} /></div></div>
-        <div className="table-wrap"><table className="data-table"><thead><tr><th>Product</th><th>Category</th><th>SKU</th><th>Price</th><th>Tax profile</th><th>Price mode</th><th>Stock</th><th /></tr></thead><tbody>
-          {filteredAdminProducts.map((product) => { const tax = taxCategories.find((item) => item.id === product.taxCategoryId); const stock = inventory.find((item) => item.productId === product.id)?.quantityOnHand ?? 0; return <tr key={product.id}><td><strong>{product.name}</strong><div className="subtle" style={{ marginTop: 3 }}>{product.unitName}</div></td><td>{product.categoryName}</td><td>{product.sku}</td><td><strong>{displayMoney(product.priceMinor)}</strong></td><td>{tax?.name ?? 'Missing tax category'}</td><td><StatusBadge status={product.priceMode} label={product.priceMode === 'inclusive' ? 'Tax inclusive' : 'Tax exclusive'} /></td><td><StatusBadge status={stock < 0 ? 'conflict' : stock <= 3 ? 'pending' : 'synced'} label={stock < 0 ? `${stock} · review` : `${stock} on hand`} /></td><td><div className="table-row-actions"><button className="btn small" onClick={() => openProductEditor(product)}>Edit</button></div></td></tr>})}
-          {!filteredAdminProducts.length && <tr><td colSpan={8}><div className="empty-state"><Package size={22} /><h3>No products found</h3><p>Create the first product or adjust your search.</p></div></td></tr>}
+      <SectionHeading title="Products" subtitle="Manage products, barcodes, prices, categories and tax treatment." actions={<button className="btn primary" onClick={() => openProductEditor()}><Plus size={14} />Add product</button>} />
+      <div className="card"><div className="table-toolbar"><div><strong>{products.length} active products</strong><div className="subtle" style={{ marginTop: 3, fontSize: 10 }}>Price mode and tax category are snapshotted at the time of sale.</div></div><div className="table-search"><input placeholder="Search product, SKU or barcode…" value={tableSearch} onChange={(event) => setTableSearch(event.target.value)} /></div></div>
+        <div className="table-wrap"><table className="data-table"><thead><tr><th>Product</th><th>Category</th><th>SKU</th><th>Barcode</th><th>Price</th><th>Tax profile</th><th>Price mode</th><th>Stock</th><th /></tr></thead><tbody>
+          {filteredAdminProducts.map((product) => { const tax = taxCategories.find((item) => item.id === product.taxCategoryId); const stock = inventory.find((item) => item.productId === product.id)?.quantityOnHand ?? 0; return <tr key={product.id}><td><strong>{product.name}</strong><div className="subtle" style={{ marginTop: 3 }}>{product.unitName}</div></td><td>{product.categoryName}</td><td>{product.sku || <span className="subtle">—</span>}</td><td>{product.barcode || <span className="subtle">—</span>}</td><td><strong>{displayMoney(product.priceMinor)}</strong></td><td>{tax?.name ?? 'Missing tax category'}</td><td><StatusBadge status={product.priceMode} label={product.priceMode === 'inclusive' ? 'Tax inclusive' : 'Tax exclusive'} /></td><td><StatusBadge status={stock < 0 ? 'conflict' : stock <= 3 ? 'pending' : 'synced'} label={stock < 0 ? `${stock} · review` : `${stock} on hand`} /></td><td><div className="table-row-actions"><button className="btn small" onClick={() => openProductEditor(product)}>Edit</button></div></td></tr>})}
+          {!filteredAdminProducts.length && <tr><td colSpan={9}><div className="empty-state"><Package size={22} /><h3>No products found</h3><p>Create the first product or adjust your search.</p></div></td></tr>}
         </tbody></table></div>
       </div>
     </>
@@ -1235,7 +1478,7 @@ export function PosApp() {
       <div className="metric-grid"><MetricCard label="Tracked products" value={String(products.length)} icon={Boxes} note="Active catalogue" /><MetricCard label="Low stock" value={String(stockRows.filter((entry) => (entry.item?.quantityOnHand ?? 0) <= 5).length)} icon={AlertTriangle} note="5 units or fewer" tone="amber" /><MetricCard label="Pending stock changes" value={String(pendingCount)} icon={Cloud} note={APP_DEMO_MODE ? 'Demo · local only' : 'Waiting for sync'} tone="blue" /><MetricCard label="Conflicts to review" value={String(reviewCount)} icon={Activity} note={`${conflictCount} sync conflict(s) · ${negativeStockCount} negative stock balance(s)`} tone={reviewCount ? 'amber' : 'green'} /></div>
       <div className="card"><div className="table-toolbar"><div><strong>Stock on hand</strong><div className="subtle" style={{ marginTop: 3, fontSize: 10 }}>Count adjustments send deltas with a base row version; stale counts require review.</div></div><div className="table-search"><input placeholder="Search stock…" value={tableSearch} onChange={(event) => setTableSearch(event.target.value)} /></div></div>
         <div className="table-wrap"><table className="data-table"><thead><tr><th>Product</th><th>SKU</th><th>Category</th><th>Available</th><th>Stock state</th><th>Last movement</th><th /></tr></thead><tbody>
-          {stockRows.filter(({ product }) => !tableSearch.trim() || `${product.name} ${product.sku} ${product.categoryName}`.toLowerCase().includes(tableSearch.toLowerCase())).map(({ product, item }) => { const qty = item?.quantityOnHand ?? 0; return <tr key={product.id}><td><strong>{product.name}</strong></td><td>{product.sku}</td><td>{product.categoryName}</td><td><strong>{qty}</strong> {product.unitName}</td><td><StatusBadge status={qty < 0 ? 'conflict' : qty <= 3 ? 'pending' : 'synced'} label={qty < 0 ? 'Negative · review' : qty <= 3 ? 'Reorder soon' : 'In stock'} /></td><td>{item ? stamp(item.updatedAt) : '—'}</td><td><button className="btn small" disabled={!isManager} onClick={() => openStockEditor(product)}>Count stock</button></td></tr>})}
+          {stockRows.filter(({ product }) => !tableSearch.trim() || `${product.name} ${product.sku} ${product.barcode ?? ''} ${product.categoryName}`.toLowerCase().includes(tableSearch.toLowerCase())).map(({ product, item }) => { const qty = item?.quantityOnHand ?? 0; return <tr key={product.id}><td><strong>{product.name}</strong></td><td>{product.sku}</td><td>{product.categoryName}</td><td><strong>{qty}</strong> {product.unitName}</td><td><StatusBadge status={qty < 0 ? 'conflict' : qty <= 3 ? 'pending' : 'synced'} label={qty < 0 ? 'Negative · review' : qty <= 3 ? 'Reorder soon' : 'In stock'} /></td><td>{item ? stamp(item.updatedAt) : '—'}</td><td><button className="btn small" disabled={!isManager} onClick={() => openStockEditor(product)}>Count stock</button></td></tr>})}
         </tbody></table></div>
       </div>
       {!isManager && <div className="info-note" style={{ marginTop: 12 }}>Cashier access is read-only for manual stock counts. Ask a manager to receive stock or approve a physical count.</div>}
@@ -1255,7 +1498,7 @@ export function PosApp() {
             {weeklyBars.map((bar, index) => { const x = 65 + index * 86; const h = Math.max(4, 142 * bar.amount / maxBar); return <g key={`${bar.label}-${index}`}><rect x={x} y={170 - h} width="38" height={h} rx="8" fill={index === 6 ? '#176546' : '#9dc9a7'} /><text x={x + 19} y="194" textAnchor="middle" fill="#718077" fontSize="10">{bar.label}</text></g> })}
           </svg>
         </div>
-        <div className="card span-5"><div className="card-head"><div><h2>Tender mix</h2><p>Net sales by original payment method</p></div><CreditCard size={17} color="#6c8c76" /></div><div className="report-bar-list">{paymentTotals.map((entry) => { const max = Math.max(1, ...paymentTotals.map((item) => item.amount)); const Icon = entry.method === 'cash' ? Banknote : entry.method === 'momo' ? Smartphone : CreditCard; return <div className="report-bar-row" key={entry.method}><span className="report-bar-label"><Icon size={12} style={{ marginRight: 5, verticalAlign: 'middle' }} />{titleCase(entry.method)}</span><span className="report-bar-track"><span className="report-bar-fill" style={{ width: `${Math.round(entry.amount / max * 100)}%` }} /></span><span className="report-bar-value">{money(entry.amount)}</span></div>})}</div><div className="info-note" style={{ marginTop: 17 }}>Demo-simulated card/MoMo records are labelled as demo. They do not represent PSP settlement.</div></div>
+        <div className="card span-5"><div className="card-head"><div><h2>Tender mix</h2><p>Net sales by original payment method</p></div><CreditCard size={17} color="#6c8c76" /></div><div className="report-bar-list">{paymentTotals.map((entry) => { const max = Math.max(1, ...paymentTotals.map((item) => item.amount)); const Icon = entry.method === 'cash' ? Banknote : entry.method === 'momo' ? Smartphone : CreditCard; return <div className="report-bar-row" key={entry.method}><span className="report-bar-label"><Icon size={12} style={{ marginRight: 5, verticalAlign: 'middle' }} />{titleCase(entry.method)}</span><span className="report-bar-track"><span className="report-bar-fill" style={{ width: `${Math.round(entry.amount / max * 100)}%` }} /></span><span className="report-bar-value">{money(entry.amount)}</span></div>})}</div><div className="info-note" style={{ marginTop: 17 }}>Demo history may contain simulated card/MoMo rows; current checkout is cash-only and no gateway settlement occurred.</div></div>
         <div className="card span-6"><div className="card-head"><div><h2>Tax component summary</h2><p>Breakdown from transaction-time tax snapshots</p></div><ShieldCheck size={17} color="#6c8c76" /></div>{taxSummary.size ? <div className="report-bar-list">{Array.from(taxSummary.entries()).map(([code, entry]) => { const max = Math.max(1, ...Array.from(taxSummary.values()).map((item) => item.amount)); return <div className="report-bar-row" key={code}><span className="report-bar-label">{entry.name} · {entry.rate}%</span><span className="report-bar-track"><span className="report-bar-fill" style={{ width: `${Math.round(entry.amount / max * 100)}%` }} /></span><span className="report-bar-value">{money(entry.amount)}</span></div>})}</div> : <div className="empty-state"><p>No tax-bearing sales recorded today.</p></div>}<div className="info-note" style={{ marginTop: 15 }}>Inclusive/exclusive calculations are local application logic. Confirm applicable GRA rules and E-VAT/CIS certification before live use.</div></div>
         <div className="card span-6"><div className="card-head"><div><h2>Top items</h2><p>Across locally available completed transactions</p></div><ShoppingBasket size={17} color="#6c8c76" /></div>{categorySales.length ? <div className="report-bar-list">{categorySales.map(({ product, qty }) => { const max = Math.max(1, ...categorySales.map((entry) => entry.qty)); return <div className="report-bar-row" key={product.id}><span className="report-bar-label">{product.name}</span><span className="report-bar-track"><span className="report-bar-fill" style={{ width: `${Math.round(qty / max * 100)}%` }} /></span><span className="report-bar-value">{qty} sold</span></div>})}</div> : <div className="empty-state"><p>Complete a sale to see top items.</p></div>}</div>
       </div>
@@ -1274,8 +1517,12 @@ export function PosApp() {
 
   const renderTeam = () => (
     <>
-      <SectionHeading title="Team" subtitle="Define owner, manager and cashier profiles. Production staff need a linked Supabase Auth account to sign in." actions={<button className="btn primary" onClick={() => openEmployeeForm()}><UserPlus size={14} />Add employee</button>} />
-      <div className="card"><div className="table-toolbar"><div><strong>{employees.length} active profiles</strong><div className="subtle" style={{ marginTop: 3, fontSize: 10 }}>Refund access is controlled by a per-employee per-transaction limit; 0 disables refunds.</div></div><div className="table-search"><input placeholder="Search team…" value={tableSearch} onChange={(event) => setTableSearch(event.target.value)} /></div></div><div className="table-wrap"><table className="data-table"><thead><tr><th>Employee</th><th>Role</th><th>Refund limit / transaction</th><th>Login / profile</th><th>Active shift</th><th /></tr></thead><tbody>{filteredEmployees.map((person) => <tr key={person.id}><td><strong>{person.displayName}</strong></td><td><StatusBadge status={person.role} label={roleLabel(person.role)} /></td><td>{refundLimitLabel(person)}</td><td>{APP_DEMO_MODE ? <span className="subtle">Demo profile · local only</span> : person.authUserId ? <span className="badge green">Supabase linked</span> : <span className="badge amber">Auth invite needed</span>}</td><td>{shifts.some((shift) => shift.status === 'open' && shift.employeeId === person.id) ? <span className="badge green">Open</span> : <span className="subtle">—</span>}</td><td><div className="table-row-actions"><button className="btn small" onClick={() => openEmployeeForm(person)}>Edit role</button>{APP_DEMO_MODE && <button className="btn small soft" onClick={() => void setEmployeeSession(person)}>Switch</button>}</div></td></tr>)}</tbody></table></div><div className="info-note" style={{ marginTop: 14 }}>This local admin screen stores role profiles. It does not send invitations or create passwords. For live cloud login, create/invite the Auth user, then link its `auth_user_id` to this employee row in Supabase.</div></div>
+      <SectionHeading title="Team" subtitle={APP_DEMO_MODE ? 'Manage local demo role profiles.' : 'Owners invite cashiers and managers by email; platform administrators are provisioned privately.'} actions={APP_DEMO_MODE || employee?.role === 'owner' ? <button className="btn primary" onClick={() => openEmployeeForm()}><UserPlus size={14} />Invite employee</button> : undefined} />
+      <div className="card">
+        <div className="table-toolbar"><div><strong>{employees.filter((person) => person.status === 'active').length} active · {employees.filter((person) => person.status === 'invited').length} invited</strong><div className="subtle" style={{ marginTop: 3, fontSize: 10 }}>Refund access is limited per transaction in GHS pesewas; 0 disables refunds and only an owner may have no cap.</div></div><div className="table-search"><input placeholder="Search team…" value={tableSearch} onChange={(event) => setTableSearch(event.target.value)} /></div></div>
+        <div className="table-wrap"><table className="data-table"><thead><tr><th>Employee</th><th>Role / status</th><th>Refund limit / transaction</th><th>Login</th><th>Active shift</th><th /></tr></thead><tbody>{filteredEmployees.map((person) => <tr key={person.id}><td><strong>{person.displayName}</strong>{person.email && <div className="subtle" style={{ marginTop: 3 }}>{person.email}</div>}</td><td><StatusBadge status={person.role} label={roleLabel(person.role)} /><div style={{ marginTop: 5 }}><StatusBadge status={person.status} label={person.status === 'invited' ? 'Invitation pending' : person.status === 'active' ? 'Active' : 'Disabled'} /></div></td><td>{refundLimitLabel(person)}</td><td>{APP_DEMO_MODE ? <span className="subtle">Demo profile · local only</span> : person.authUserId ? <span className="badge green">D1 account linked</span> : person.status === 'invited' ? <span className="badge amber">Invite sent</span> : <span className="badge amber">Access needs review</span>}</td><td>{person.status === 'active' && shifts.some((shift) => shift.status === 'open' && shift.employeeId === person.id) ? <span className="badge green">Open</span> : <span className="subtle">—</span>}</td><td><div className="table-row-actions">{(APP_DEMO_MODE || employee?.role === 'owner') && <button className="btn small" onClick={() => openEmployeeForm(person)}>{person.status === 'invited' ? 'Resend invite' : 'Edit role'}</button>}{APP_DEMO_MODE && person.status === 'active' && <button className="btn small soft" onClick={() => void setEmployeeSession(person)}>Switch</button>}</div></td></tr>)}</tbody></table></div>
+        <div className="info-note" style={{ marginTop: 14 }}>{APP_DEMO_MODE ? 'Demo profiles stay on this device only.' : 'Invited staff create their own password from a one-time email link. Public registration creates vendor-owner accounts only; it cannot grant platform-admin access.'}</div>
+      </div>
     </>
   )
 
@@ -1291,12 +1538,13 @@ export function PosApp() {
     <>
       <SectionHeading title="Settings" subtitle="Device, display currency, cloud, receipt and compliance information." />
       <div className="content-grid">
+        <div className="card span-6"><div className="card-head"><div><h2>Shop name on receipts</h2><p>Printed above sales and return receipts</p></div><Store size={18} color="#6c8c76" /></div><form className="form-grid" onSubmit={saveShopProfile}><div className="field full"><label htmlFor="receipt-shop-name">Receipt shop name</label><input id="receipt-shop-name" required minLength={2} maxLength={120} value={shopNameDraft} disabled={employee?.role !== 'owner'} onChange={(event) => setShopNameDraft(event.target.value)} placeholder="Your shop or business name" /><span className="field-hint">Owners can update this name. In live mode it is saved to the store’s D1 profile and shared with signed-in devices.</span></div>{employee?.role === 'owner' && <div className="field full"><button className="btn primary" disabled={shopNameSaving || shopNameDraft.trim().length < 2 || shopNameDraft.trim().length > 120 || shopNameDraft.trim() === shopName}>{shopNameSaving ? <Loader2 size={14} className="spin" /> : <Check size={14} />}{shopNameSaving ? 'Saving…' : 'Save receipt name'}</button></div>}</form><div className="info-note" style={{ marginTop: 10 }}>Use the business name you want customers to see. Confirm required legal and tax receipt details separately; this setting does not certify GRA E-VAT/CIS compliance.</div></div>
         <div className="card span-6"><div className="card-head"><div><h2>Display currency</h2><p>GHS remains the tender/reporting base. Optional reference values are never a converted settlement amount.</p></div><CircleDollarSign size={18} color="#6c8c76" /></div><div className="form-grid"><div className="field"><label>Reference currency</label><select value={displayCurrency} onChange={async (event) => { const next = event.target.value as typeof displayCurrency; setDisplayCurrency(next); await setMeta('display-currency', next) }}><option value="GHS">GHS · primary</option><option value="USD">USD · reference</option><option value="EUR">EUR · reference</option><option value="KES">KES · reference</option></select></div><div className="field"><label>Manual rate · target currency per GHS</label><input inputMode="decimal" placeholder="e.g. 0.08" value={fxRate} onChange={(event) => setFxRate(event.target.value)} onBlur={() => void setMeta('display-fx-rate', fxRate)} /><span className="field-hint">No rate is fetched automatically. Keep blank until you enter a trusted reference rate.</span></div></div><div className="info-note" style={{ marginTop: 12 }}>A reference currency is for customer display only. Receipts, tender amounts, inventory costing and tax reports remain in the store base currency (GHS).</div></div>
         <div className="card span-6"><div className="card-head"><div><h2>Connectivity & sync</h2><p>Device status and local outbox</p></div>{online ? <Wifi size={18} color="#34724f" /> : <WifiOff size={18} color="#a26210" />}</div><div className="report-bar-list"><div className="report-bar-row" style={{ gridTemplateColumns: '1fr auto' }}><span className="report-bar-label">Network</span><StatusBadge status={online ? 'synced' : 'pending'} label={online ? 'Online' : 'Offline'} /></div><div className="report-bar-row" style={{ gridTemplateColumns: '1fr auto' }}><span className="report-bar-label">Cloud</span><StatusBadge status={APP_DEMO_MODE ? 'pending' : cloudSignedIn ? 'synced' : 'conflict'} label={APP_DEMO_MODE ? 'Demo · local only' : cloudSignedIn ? 'Signed in' : 'Not signed in'} /></div><div className="report-bar-row" style={{ gridTemplateColumns: '1fr auto' }}><span className="report-bar-label">Queued changes</span><strong>{pendingCount}</strong></div><div className="report-bar-row" style={{ gridTemplateColumns: '1fr auto' }}><span className="report-bar-label">Conflicts</span><strong>{conflictCount}</strong></div></div><div className="heading-actions" style={{ marginTop: 15 }}><button className="btn primary" disabled={syncBusy || !online} onClick={() => void syncData()}><RefreshCw size={14} className={syncBusy ? 'spin' : ''} />{syncBusy ? 'Syncing…' : 'Sync now'}</button>{!APP_DEMO_MODE && <button className="btn" onClick={() => void signOut()}><LogOut size={14} />Sign out</button>}</div></div>
         {!APP_DEMO_MODE && <div className="card span-6"><div className="card-head"><div><h2>Offline device access</h2><p>PIN-gated unlock for this cached staff profile</p></div><ShieldCheck size={18} color="#6c8c76" /></div><div className="report-bar-row" style={{ gridTemplateColumns: '1fr auto', marginBottom: 12 }}><span className="report-bar-label">Local PIN status</span><StatusBadge status={offlinePinAvailable ? 'synced' : 'pending'} label={offlinePinAvailable ? 'Registered on this device' : 'Not registered'} /></div>{cloudSignedIn && online ? <form className="form-grid" onSubmit={saveLocalOfflinePin}><div className="field"><label htmlFor="offline-pin-setup">New PIN · 6–8 digits</label><input id="offline-pin-setup" type="password" inputMode="numeric" autoComplete="new-password" pattern="[0-9]{6,8}" maxLength={8} value={offlinePinSetup} onChange={(event) => setOfflinePinSetup(event.target.value.replace(/\D/g, '').slice(0, 8))} required /></div><div className="field"><label htmlFor="offline-pin-confirm">Confirm PIN</label><input id="offline-pin-confirm" type="password" inputMode="numeric" autoComplete="new-password" pattern="[0-9]{6,8}" maxLength={8} value={offlinePinConfirm} onChange={(event) => setOfflinePinConfirm(event.target.value.replace(/\D/g, '').slice(0, 8))} required /></div><div className="field full"><button className="btn primary" disabled={offlinePinSaving || offlinePinSetup.length < 6 || offlinePinConfirm.length < 6}>{offlinePinSaving ? <Loader2 size={14} className="spin" /> : <ShieldCheck size={14} />}{offlinePinSaving ? 'Saving…' : offlinePinAvailable ? 'Change offline PIN' : 'Set offline PIN'}</button></div></form> : <div className="info-note">Sign in while online to set or change this PIN. Only a salted PBKDF2 hash is stored. Signing out clears the local PIN and cached profile. This is a device unlock—not cloud authentication or encryption of IndexedDB records.</div>}<div className="field-hint" style={{ marginTop: 9 }}>Each staff member may enroll their own PIN after signing in. Offline access is limited to the last cached profile on this device; keep the tablet’s operating-system screen lock enabled.</div></div>}
         <div className="card span-6"><div className="card-head"><div><h2>Receipts & printers</h2><p>PDF, native share/mail, ESC/POS Bluetooth or USB</p></div><Printer size={18} color="#6c8c76" /></div><div className="info-note">Bluetooth and USB print use browser device APIs and require HTTPS, compatible Chromium, a user tap to connect, and a tested printer model. iOS/Safari support is limited. Native browser print/PDF is the fallback.</div><div className="heading-actions" style={{ marginTop: 13 }}><button className="btn" onClick={() => showToast('Open any receipt to use PDF print, native share/mail, Bluetooth or USB ESC/POS.', 'plain')}><Printer size={14} />Printer help</button><button className="btn" onClick={() => void installApp()}>{installed ? <Check size={14} /> : <ArrowDownToLine size={14} />}{installed ? 'Installed' : 'Install PWA'}</button></div><div className="subtle" style={{ marginTop: 12, fontSize: 9 }}>Managed email requires a server-side Resend key and verified sender. Demo falls back to native share/PDF; no email delivery is claimed.</div></div>
-        <div className="card span-6"><div className="card-head"><div><h2>Payment & compliance</h2><p>Ghana is a provisional market configuration</p></div><ShieldCheck size={18} color="#6c8c76" /></div><div className="report-bar-list"><div className="report-bar-row" style={{ gridTemplateColumns: '1fr auto' }}><span className="report-bar-label">Paystack server key</span><StatusBadge status={cloudPaymentEnabled ? 'synced' : 'pending'} label={cloudPaymentEnabled ? 'Configured' : 'Not configured'} /></div><div className="report-bar-row" style={{ gridTemplateColumns: '1fr auto' }}><span className="report-bar-label">Tax receipt profile</span><StatusBadge status="pending" label="Demo / unverified" /></div><div className="report-bar-row" style={{ gridTemplateColumns: '1fr auto' }}><span className="report-bar-label">E-VAT/CIS certification</span><StatusBadge status="pending" label="Not verified" /></div></div><div className="attention-note" style={{ marginTop: 13 }}><AlertTriangle size={14} />Never mark card or mobile money paid from a redirect, screenshot or timeout. Only signed provider webhook/server verification finalizes a live digital tender.</div></div>
-        {APP_DEMO_MODE && <div className="card span-12"><div className="card-head"><div><h2>Demo data</h2><p>Reset the local sample catalogue and transactions for this browser.</p></div><Sparkles size={18} color="#6c8c76" /></div><button className="btn danger" onClick={async () => { if (!window.confirm('Clear local demo data and reseed the sample store on this browser?')) return; await clearLocalDemoData(); localStorage.removeItem('pos-selected-employee'); await ensureDemoData(); await refreshLocalState(); setEmployee(null); setCart({}); showToast('Demo workspace reset.', 'success') }}><Trash2 size={14} />Reset demo workspace</button></div>}
+        <div className="card span-6"><div className="card-head"><div><h2>Payment & compliance</h2><p>Cash-only checkout is enabled</p></div><ShieldCheck size={18} color="#6c8c76" /></div><div className="report-bar-list"><div className="report-bar-row" style={{ gridTemplateColumns: '1fr auto' }}><span className="report-bar-label">Accepted tender</span><StatusBadge status="synced" label="Cash only" /></div><div className="report-bar-row" style={{ gridTemplateColumns: '1fr auto' }}><span className="report-bar-label">Payment gateway</span><StatusBadge status="pending" label="Not configured · not required" /></div><div className="report-bar-row" style={{ gridTemplateColumns: '1fr auto' }}><span className="report-bar-label">Tax receipt profile</span><StatusBadge status="pending" label="Demo / unverified" /></div><div className="report-bar-row" style={{ gridTemplateColumns: '1fr auto' }}><span className="report-bar-label">E-VAT/CIS certification</span><StatusBadge status="pending" label="Not verified" /></div></div><div className="info-note" style={{ marginTop: 13 }}>Card and mobile-money checkout is hidden. No gateway keys, webhooks or live payment processing are required for the cash-only setup.</div></div>
+        {APP_DEMO_MODE && <div className="card span-12"><div className="card-head"><div><h2>Demo data</h2><p>Reset the local sample catalogue and transactions for this browser.</p></div><Sparkles size={18} color="#6c8c76" /></div><button className="btn danger" onClick={async () => { if (!window.confirm('Clear local demo data and reseed the sample store on this browser?')) return; await clearLocalDemoData(); localStorage.removeItem('pos-selected-employee'); await ensureDemoData(); setShopName('Accra Retail Demo'); setShopNameDraft('Accra Retail Demo'); await setMeta('shop-name', 'Accra Retail Demo'); await refreshLocalState(); setEmployee(null); setCart({}); showToast('Demo workspace reset.', 'success') }}><Trash2 size={14} />Reset demo workspace</button></div>}
       </div>
     </>
   )
@@ -1325,7 +1573,7 @@ export function PosApp() {
           <div className="brand-lockup"><span className="brand-mark">K</span><span><span className="brand-name">Kasa POS</span><span className="brand-caption">Independent retail</span></span></div>
           <div className="nav-label">Workspace</div>
           <nav className="nav-list" aria-label="Main navigation">{allowedNav.map((item) => { const Icon = item.icon; return <button key={item.key} className={`nav-item ${view === item.key ? 'active' : ''}`} onClick={() => { setView(item.key); setTableSearch('') }}><span className="nav-icon"><Icon size={16} /></span>{item.label}{item.key === 'transactions' && allPendingDigital > 0 && <span className="nav-count">{allPendingDigital}</span>}</button> })}</nav>
-          <div className="sidebar-bottom"><div className="store-card"><div className="store-card-title"><Store size={12} style={{ verticalAlign: 'middle', marginRight: 5 }} />Accra Retail Demo</div><div className="store-card-sub">GHS base · local tax profile unverified<br />{APP_DEMO_MODE ? 'This browser only' : `Store ${employee.storeId.slice(0, 8)}`}</div></div><div className="sidebar-user"><span className="avatar">{initials(employee.displayName)}</span><span className="user-meta"><strong>{employee.displayName}</strong><span>{roleLabel(employee.role)}</span></span><button className="user-switch" title="Switch employee" onClick={() => void signOut()}><ChevronDown size={15} /></button></div></div>
+          <div className="sidebar-bottom"><div className="store-card"><div className="store-card-title"><Store size={12} style={{ verticalAlign: 'middle', marginRight: 5 }} />{shopName || 'Kasa POS store'}</div><div className="store-card-sub">GHS base · local tax profile unverified<br />{APP_DEMO_MODE ? 'This browser only' : `Store ${employee.storeId.slice(0, 8)}`}</div></div><div className="sidebar-user"><span className="avatar">{initials(employee.displayName)}</span><span className="user-meta"><strong>{employee.displayName}</strong><span>{roleLabel(employee.role)}</span></span><button className="user-switch" title="Switch employee" onClick={() => void signOut()}><ChevronDown size={15} /></button></div></div>
         </aside>
         <main className="main-area">
           <header className="topbar"><div className="topbar-left"><div className="mobile-brand"><span className="brand-mark">K</span><strong>Kasa POS</strong></div><div><div className="topbar-title">{pageTitle[view]}</div><div className="topbar-subtitle">{dateText} · {employee.displayName} · {roleLabel(employee.role)}</div></div></div><div className="topbar-actions"><select className="top-select" aria-label="Display reference currency" value={displayCurrency} onChange={async (event) => { const next = event.target.value as typeof displayCurrency; setDisplayCurrency(next); await setMeta('display-currency', next) }}><option value="GHS">GHS base</option><option value="USD">USD ref</option><option value="EUR">EUR ref</option><option value="KES">KES ref</option></select>{installPrompt && <button className="btn small soft" onClick={() => void installApp()}><ArrowDownToLine size={13} /><span className="hide-small">Install</span></button>}<button className="icon-button" title="Sync now" onClick={() => void syncData()} disabled={syncBusy || !online}><RefreshCw size={15} className={syncBusy ? 'spin' : ''} /></button><button className="icon-button" title="Switch employee" onClick={() => void signOut()}><span className="avatar small">{initials(employee.displayName)}</span></button></div></header>
@@ -1339,14 +1587,17 @@ export function PosApp() {
         </main>
       </div>
 
-      {modal === 'payment' && <Modal title={pendingPayment ? 'Payment pending' : 'Complete sale'} description={pendingPayment ? 'This order remains unpaid until verified provider confirmation.' : 'Cash, card and mobile money. Digital tenders are never finalized from a redirect or screenshot.'} onClose={() => { if (pendingPayment) { setModal(null); setPendingPayment(null) } else setModal(null) }} footer={pendingPayment ? <><button className="btn" onClick={() => { setModal(null); setPendingPayment(null) }}>Close · keep pending</button>{pendingPayment.reference && !APP_DEMO_MODE && <button className="btn" disabled={!online || !cloudSignedIn || paymentChecking} onClick={() => void verifyPendingPayment(pendingPayment, true)}>{paymentChecking ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />}Check provider status</button>}{pendingPayment.retryable && !APP_DEMO_MODE && <button className="btn primary" disabled={!online || !cloudSignedIn || paymentChecking || !paymentConsent || !customerEmail.trim() || (pendingPayment.method === 'momo' && !customerPhone.trim())} onClick={() => void retryPendingPayment(pendingPayment)}>{paymentChecking ? <Loader2 size={14} className="spin" /> : <Smartphone size={14} />}{pendingPayment.reference ? 'Retry payment' : 'Request payment'}</button>}</> : <><button className="btn" onClick={() => setModal(null)}>Back to cart</button><button className="btn primary" disabled={paymentMethod === 'cash' ? parseMoneyInput(cashReceived) < cartTotals.totalMinor : !cartLines.length || (!APP_DEMO_MODE && (!paymentConsent || (online && (!customerEmail.trim() || (paymentMethod === 'momo' && !customerPhone.trim())))))} onClick={() => paymentMethod === 'cash' ? void finishCashSale() : void startDigitalPayment()}>{paymentMethod === 'cash' ? <Banknote size={14} /> : paymentMethod === 'card' ? <CreditCard size={14} /> : <Smartphone size={14} />}{paymentMethod === 'cash' ? 'Record cash sale' : APP_DEMO_MODE ? `Simulate ${paymentMethod === 'momo' ? 'MoMo' : 'card'} approval · demo` : `Request ${paymentMethod === 'momo' ? 'MoMo' : 'card'} payment`}</button></>}>
-          {pendingPayment ? <div className="success-panel" style={{ paddingTop: 4 }}><div className="success-check" style={{ background: '#fff4dc', color: '#a26210' }}><Loader2 size={23} className={paymentChecking ? 'spin' : ''} /></div><h2>Awaiting confirmation</h2><p>{pendingPayment.message}</p><div className="receipt-paper"><div className="receipt-title">{pendingPayment.method === 'momo' ? 'Mobile-money request' : 'Card authorization'}</div><div className="receipt-line"><span>Order</span><strong>{orders.find((order) => order.id === pendingPayment.orderId)?.orderNumber ?? pendingPayment.orderId.slice(0, 8)}</strong></div><div className="receipt-line"><span>Reference</span><strong>{pendingPayment.reference ?? 'Not assigned yet'}</strong></div><div className="receipt-line"><span>Network</span><strong>{pendingPayment.network?.toUpperCase() ?? (pendingPayment.method === 'card' ? 'Card' : '—')}</strong></div></div><div className="attention-note" style={{ textAlign: 'left' }}><AlertTriangle size={14} />Do not hand over goods as paid until the POS receives verified server confirmation. A timeout is not proof of success or failure.</div>{pendingPayment.retryable && !APP_DEMO_MODE && <><div className="info-note" style={{ textAlign: 'left' }}>After a confirmed failed/abandoned attempt—or when no request was sent—you can create a new authorization for this same sale. Any saved provider reference is checked first to avoid a duplicate charge.</div><div className="form-grid"><div className="field"><label>Customer email</label><input type="email" value={customerEmail} onChange={(event) => setCustomerEmail(event.target.value)} placeholder="customer@example.com" /></div>{pendingPayment.method === 'momo' && <><div className="field"><label>Mobile-money network</label><select value={momoNetwork} onChange={(event) => setMomoNetwork(event.target.value)}><option value="mtn">MTN Mobile Money</option><option value="atl">ATMoney / Airtel Money</option><option value="vod">Telecel Cash</option></select></div><div className="field"><label>Customer phone</label><input inputMode="tel" value={customerPhone} onChange={(event) => setCustomerPhone(event.target.value)} placeholder="+233 24 123 4567" /></div></>}</div></>}{APP_DEMO_MODE && <div className="info-note">Demo mode sends no request. A separate “simulate approval” action is available only from the checkout method selector.</div>}</div> : <>
+      {modal === 'payment' && <Modal title={pendingPayment ? 'Payment pending' : 'Complete sale'} description={pendingPayment ? 'This order remains unpaid until its payment status is reconciled.' : CASH_ONLY_CHECKOUT ? 'Cash only. Enter the amount received; change is calculated automatically.' : 'Cash, card and mobile money. Digital tenders are never finalized from a redirect or screenshot.'} onClose={() => { if (pendingPayment) { setModal(null); setPendingPayment(null) } else setModal(null) }} footer={pendingPayment ? <><button className="btn" onClick={() => { setModal(null); setPendingPayment(null) }}>Close · keep pending</button>{!CASH_ONLY_CHECKOUT && pendingPayment.reference && !APP_DEMO_MODE && <button className="btn" disabled={!online || !cloudSignedIn || paymentChecking} onClick={() => void verifyPendingPayment(pendingPayment, true)}>{paymentChecking ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />}Check provider status</button>}{!CASH_ONLY_CHECKOUT && pendingPayment.retryable && !APP_DEMO_MODE && <button className="btn primary" disabled={!online || !cloudSignedIn || paymentChecking || !paymentConsent || !customerEmail.trim() || (pendingPayment.method === 'momo' && !customerPhone.trim())} onClick={() => void retryPendingPayment(pendingPayment)}>{paymentChecking ? <Loader2 size={14} className="spin" /> : <Smartphone size={14} />}{pendingPayment.reference ? 'Retry payment' : 'Request payment'}</button>}</> : <><button className="btn" onClick={() => setModal(null)}>Back to cart</button><button className="btn primary" disabled={!cartLines.length || !activeShift || paymentMethod !== 'cash' || parseMoneyInput(cashReceived) < cartTotals.totalMinor} onClick={() => paymentMethod === 'cash' ? void finishCashSale() : void startDigitalPayment()}><Banknote size={14} />Record cash sale</button></>}>
+          {pendingPayment ? <div className="success-panel" style={{ paddingTop: 4 }}><div className="success-check" style={{ background: '#fff4dc', color: '#a26210' }}><Loader2 size={23} className={paymentChecking ? 'spin' : ''} /></div><h2>Awaiting confirmation</h2><p>{pendingPayment.message}</p><div className="receipt-paper"><div className="receipt-title">{pendingPayment.method === 'momo' ? 'Mobile-money request' : 'Card authorization'}</div><div className="receipt-line"><span>Order</span><strong>{orders.find((order) => order.id === pendingPayment.orderId)?.orderNumber ?? pendingPayment.orderId.slice(0, 8)}</strong></div><div className="receipt-line"><span>Reference</span><strong>{pendingPayment.reference ?? 'Not assigned yet'}</strong></div><div className="receipt-line"><span>Network</span><strong>{pendingPayment.network?.toUpperCase() ?? (pendingPayment.method === 'card' ? 'Card' : '—')}</strong></div></div><div className="attention-note" style={{ textAlign: 'left' }}><AlertTriangle size={14} />Do not hand over goods as paid until the POS receives verified server confirmation. A timeout is not proof of success or failure.</div>{!CASH_ONLY_CHECKOUT && pendingPayment.retryable && !APP_DEMO_MODE && <><div className="info-note" style={{ textAlign: 'left' }}>After a confirmed failed/abandoned attempt—or when no request was sent—you can create a new authorization for this same sale. Any saved provider reference is checked first to avoid a duplicate charge.</div><div className="form-grid"><div className="field"><label>Customer email</label><input type="email" value={customerEmail} onChange={(event) => setCustomerEmail(event.target.value)} placeholder="customer@example.com" /></div>{pendingPayment.method === 'momo' && <><div className="field"><label>Mobile-money network</label><select value={momoNetwork} onChange={(event) => setMomoNetwork(event.target.value)}><option value="mtn">MTN Mobile Money</option><option value="atl">ATMoney / Airtel Money</option><option value="vod">Telecel Cash</option></select></div><div className="field"><label>Customer phone</label><input inputMode="tel" value={customerPhone} onChange={(event) => setCustomerPhone(event.target.value)} placeholder="+233 24 123 4567" /></div></>}</div></>}{APP_DEMO_MODE && <div className="info-note">Demo mode sends no request. A separate “simulate approval” action is available only from the checkout method selector.</div>}</div> : <>
             <div className="form-grid"><div className="field full"><label>Sale total · GHS</label><input value={money(cartTotals.totalMinor)} readOnly /></div></div>
             <div className="payment-methods" style={{ marginTop: 14 }}>
               <button className={`payment-choice ${paymentMethod === 'cash' ? 'selected' : ''}`} onClick={() => setPaymentMethod('cash')}><span className="payment-choice-icon"><Banknote size={16} /></span><strong>Cash</strong><span>Finalize offline</span></button>
-              <button className={`payment-choice ${paymentMethod === 'momo' ? 'selected' : ''}`} onClick={() => setPaymentMethod('momo')}><span className="payment-choice-icon"><Smartphone size={16} /></span><strong>Mobile money</strong><span>{APP_DEMO_MODE ? 'Demo only' : 'Provider confirmation'}</span></button>
-              <button className={`payment-choice ${paymentMethod === 'card' ? 'selected' : ''}`} onClick={() => setPaymentMethod('card')}><span className="payment-choice-icon"><CreditCard size={16} /></span><strong>Card</strong><span>{APP_DEMO_MODE ? 'Demo only' : 'Provider confirmation'}</span></button>
+              {!CASH_ONLY_CHECKOUT && <>
+                <button className={`payment-choice ${paymentMethod === 'momo' ? 'selected' : ''}`} onClick={() => setPaymentMethod('momo')}><span className="payment-choice-icon"><Smartphone size={16} /></span><strong>Mobile money</strong><span>{APP_DEMO_MODE ? 'Demo only' : 'Provider confirmation'}</span></button>
+                <button className={`payment-choice ${paymentMethod === 'card' ? 'selected' : ''}`} onClick={() => setPaymentMethod('card')}><span className="payment-choice-icon"><CreditCard size={16} /></span><strong>Card</strong><span>{APP_DEMO_MODE ? 'Demo only' : 'Provider confirmation'}</span></button>
+              </>}
             </div>
+            {CASH_ONLY_CHECKOUT && <div className="info-note">Cash is the only enabled payment method for this store. Card and mobile-money options are hidden.</div>}
             {paymentMethod === 'cash' ? <>
               <div className="field"><label htmlFor="cash-received">Cash received · GHS</label><input id="cash-received" inputMode="decimal" value={cashReceived} onChange={(event) => setCashReceived(event.target.value)} placeholder="0.00" autoFocus /></div>
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>{[cartTotals.totalMinor, cartTotals.totalMinor + 500, cartTotals.totalMinor + 1000, cartTotals.totalMinor + 2000].map((amount, index) => <button className="btn small" key={`${amount}-${index}`} onClick={() => setCashReceived(inputFromMinor(amount))}>{index === 0 ? 'Exact' : `+ GHS ${(amount - cartTotals.totalMinor) / 100}`}</button>)}</div>
@@ -1361,14 +1612,14 @@ export function PosApp() {
         </Modal>}
 
       {modal === 'receipt' && receiptOrder && <Modal title={receiptRefund ? 'Refund receipt' : 'Receipt'} description="Tax and tender details are preserved from the original transaction." onClose={() => setModal(null)} wide>
-        <div className="receipt-paper"><div className="receipt-title">KASA POS · {receiptRefund ? 'RETURN' : 'SALES RECEIPT'}</div><div className="receipt-line"><span>Receipt</span><strong>{receiptOrder.orderNumber}</strong></div><div className="receipt-line"><span>Date</span><strong>{stamp(receiptOrder.createdAt)}</strong></div><div className="receipt-line"><span>Cashier</span><strong>{receiptOrder.employeeName}</strong></div><div className="receipt-line"><span>Payment</span><strong>{titleCase(receiptOrder.paymentMethod ?? 'pending')} · {receiptOrder.paymentStatus === 'demo_simulated' ? 'Demo simulation only' : titleCase(receiptOrder.paymentStatus ?? receiptOrder.status)}</strong></div><hr className="receipt-divider" />
+        <div className="receipt-paper"><div className="receipt-title">{shopName || 'Kasa POS'} · {receiptRefund ? 'RETURN RECEIPT' : 'SALES RECEIPT'}</div><div className="receipt-line"><span>Receipt</span><strong>{receiptOrder.orderNumber}</strong></div><div className="receipt-line"><span>Date</span><strong>{stamp(receiptOrder.createdAt)}</strong></div><div className="receipt-line"><span>Cashier</span><strong>{receiptOrder.employeeName}</strong></div><div className="receipt-line"><span>Payment</span><strong>{titleCase(receiptOrder.paymentMethod ?? 'pending')} · {receiptOrder.paymentStatus === 'demo_simulated' ? 'Demo simulation only' : titleCase(receiptOrder.paymentStatus ?? receiptOrder.status)}</strong></div><hr className="receipt-divider" />
           {(receiptRefund ? receiptRefund.lines : receiptOrder.items.map((item) => ({ productName: item.name, quantity: item.quantity, itemMinor: item.grossMinor - item.taxMinor, taxMinor: item.taxMinor, restock: false, productId: item.productId, orderLineId: item.productId }))).map((line, index) => <div key={`${line.productId}-${index}`}><div className="receipt-line"><span>{line.quantity} × {line.productName}</span><strong>{money(line.itemMinor + line.taxMinor)}</strong></div><div className="receipt-line" style={{ marginTop: 3, fontSize: 9 }}><span>Tax {receiptRefund ? '' : receiptOrder.items.find((item) => item.productId === line.productId)?.taxRatePercent.toFixed(2) + '%'} {receiptRefund && (line.restock ? '· restocked' : '· not restocked')}</span><span>{money(line.taxMinor)}</span></div></div>)}
           <hr className="receipt-divider" />{receiptRefund ? <><div className="receipt-line"><span>Status</span><strong>{receiptRefund.method === 'cash' ? 'Cash refund recorded' : titleCase(receiptRefund.status) + ' · provider reversal'}</strong></div><div className="receipt-line"><span>Reason</span><strong>{receiptRefund.reason}</strong></div><div className="receipt-line"><span>Refund amount</span><strong>{money(receiptRefund.amountMinor)}</strong></div><div className="receipt-line"><span>Tax reversal</span><strong>{money(receiptRefund.taxMinor)}</strong></div></> : <><div className="receipt-line"><span>Net subtotal</span><strong>{money(receiptOrder.subtotalMinor)}</strong></div><div className="receipt-line"><span>Tax total</span><strong>{money(receiptOrder.taxMinor)}</strong></div><div className="receipt-line" style={{ fontSize: 13, fontWeight: 800, color: 'var(--green)' }}><span>Total</span><strong>{money(receiptOrder.totalMinor)}</strong></div>{receiptOrder.paymentMethod === 'cash' && <><div className="receipt-line"><span>Cash received</span><strong>{money(receiptOrder.cashTenderedMinor ?? receiptOrder.totalMinor)}</strong></div><div className="receipt-line"><span>Change</span><strong>{money(receiptOrder.changeMinor ?? 0)}</strong></div></>}</>}
           <hr className="receipt-divider" /><div className="receipt-line" style={{ justifyContent: 'center', color: '#88938b' }}><span>Thank you for shopping with us.</span></div>
         </div>
         <div className="info-note"><strong>Tax notice:</strong> This is a demo/template receipt, not a statement of GRA E-VAT/CIS certification. Confirm legal receipt content and device/printer compatibility before a live pilot.</div>
         <div className="form-grid" style={{ marginTop: 14 }}><div className="field full"><label>Email receipt address</label><input type="email" placeholder="customer@example.com" value={receiptEmail} onChange={(event) => setReceiptEmail(event.target.value)} /><span className="field-hint">Managed email requires a configured Resend sender. Demo uses native share/PDF fallback.</span><label style={{ display: 'flex', alignItems: 'flex-start', gap: 9, marginTop: 9, fontSize: 12, lineHeight: 1.5 }}><input type="checkbox" checked={receiptConsent} onChange={(event) => setReceiptConsent(event.target.checked)} /><span>The customer asked to receive this receipt by email and has been told the address is used only to deliver it. <a href={PRIVACY_NOTICE_PATH} target="_blank" rel="noreferrer">Privacy notice</a>.</span></label></div></div>
-        <div className="heading-actions print-hidden" style={{ marginTop: 12 }}><button className="btn" onClick={() => window.print()}><Printer size={14} />Browser print / save PDF</button><button className="btn" onClick={() => void downloadReceiptPdf(receiptOrder, receiptRefund ?? undefined).then(() => showToast('PDF downloaded.', 'success')).catch(() => showToast('PDF export failed.', 'error'))}><ArrowDownToLine size={14} />Download PDF</button><button className="btn" onClick={() => void shareReceipt(receiptOrder, receiptRefund ?? undefined).then((result) => showToast(result === 'shared' ? 'Receipt opened in the device share sheet.' : 'PDF downloaded; attach it from your mail app.', 'plain')).catch(() => showToast('Share is not available in this browser.', 'error'))}><ArrowLeftRight size={14} />Share / Mail</button><button className="btn" disabled={!receiptConsent || !receiptEmail.trim()} onClick={() => void emailReceipt()}><Mail size={14} />Email receipt</button></div>
+        <div className="heading-actions print-hidden" style={{ marginTop: 12 }}><button className="btn" onClick={() => window.print()}><Printer size={14} />Browser print / save PDF</button><button className="btn" onClick={() => void downloadReceiptPdf(receiptOrder, receiptRefund ?? undefined, shopName).then(() => showToast('PDF downloaded.', 'success')).catch(() => showToast('PDF export failed.', 'error'))}><ArrowDownToLine size={14} />Download PDF</button><button className="btn" onClick={() => void shareReceipt(receiptOrder, receiptRefund ?? undefined, shopName).then((result) => showToast(result === 'shared' ? 'Receipt opened in the device share sheet.' : 'PDF downloaded; attach it from your mail app.', 'plain')).catch(() => showToast('Share is not available in this browser.', 'error'))}><ArrowLeftRight size={14} />Share / Mail</button><button className="btn" disabled={!receiptConsent || !receiptEmail.trim()} onClick={() => void emailReceipt()}><Mail size={14} />Email receipt</button></div>
         <div className="heading-actions print-hidden" style={{ marginTop: 8 }}><button className="btn small" onClick={() => void printThermal('bluetooth')}><Printer size={12} />ESC/POS Bluetooth</button><button className="btn small" onClick={() => void printThermal('usb')}><Printer size={12} />ESC/POS USB</button></div>
       </Modal>}
 
@@ -1381,8 +1632,18 @@ export function PosApp() {
         <div className="heading-actions" style={{ marginTop: 10 }}><button className="btn small" onClick={() => setRefundQty(Object.fromEntries(selectedOrder.items.map((line) => [line.productId, refundAvailable[line.productId] ?? 0])))}>Select remaining quantities</button><button className="btn small" onClick={() => setRefundQty(Object.fromEntries(selectedOrder.items.map((line) => [line.productId, 0])))}>Clear</button></div>
       </Modal>}
 
-      {modal === 'product' && productForm && <Modal title={productForm.id ? 'Edit product' : 'Add product'} description="Price is entered in GHS. Tax mode and category are saved with the catalogue." onClose={() => setModal(null)} footer={<><button className="btn" onClick={() => setModal(null)}>Cancel</button><button form="product-form" type="submit" className="btn primary"><Check size={14} />Save product</button></>}>
-        <form id="product-form" className="form-grid" onSubmit={saveProductForm}><div className="field full"><label>Product name</label><input required maxLength={80} value={productForm.name} onChange={(event) => setProductForm({ ...productForm, name: event.target.value })} /></div><div className="field"><label>SKU</label><input required value={productForm.sku} onChange={(event) => setProductForm({ ...productForm, sku: event.target.value })} /></div><div className="field"><label>Category</label><input required list="category-options" value={productForm.categoryName} onChange={(event) => setProductForm({ ...productForm, categoryName: event.target.value })} /><datalist id="category-options">{categories.filter((category) => category !== 'All items').map((category) => <option key={category} value={category} />)}</datalist></div><div className="field"><label>Price · GHS</label><input required inputMode="decimal" placeholder="0.00" value={productForm.price} onChange={(event) => setProductForm({ ...productForm, price: event.target.value })} /></div><div className="field"><label>Initial / counted stock</label><input required type="number" min="0" step="0.001" value={productForm.stock} onChange={(event) => setProductForm({ ...productForm, stock: event.target.value })} /><span className="field-hint">Editing this value creates a stock-count movement.</span></div><div className="field"><label>Tax category</label><select required value={productForm.taxCategoryId} onChange={(event) => setProductForm({ ...productForm, taxCategoryId: event.target.value })}>{taxCategories.map((tax) => <option key={tax.id} value={tax.id}>{tax.name}</option>)}</select></div><div className="field"><label>Price mode</label><select value={productForm.priceMode} onChange={(event) => setProductForm({ ...productForm, priceMode: event.target.value as Product['priceMode'] })}><option value="inclusive">Tax inclusive</option><option value="exclusive">Tax exclusive</option></select></div><div className="field full"><label className="inline-check"><input type="checkbox" checked={productForm.active} onChange={(event) => setProductForm({ ...productForm, active: event.target.checked })} />Active in checkout</label></div></form>
+      {modal === 'product' && productForm && <Modal title={productForm.id ? 'Edit product' : 'Add product'} description="Scan or enter the product barcode, then save its name, price, tax category and stock." onClose={() => setModal(null)} footer={<><button className="btn" onClick={() => setModal(null)}>Cancel</button><button form="product-form" type="submit" className="btn primary"><Check size={14} />Save product</button></>}>
+        <form id="product-form" className="form-grid" onSubmit={saveProductForm}>
+          <div className="field full"><label>Product name</label><input required maxLength={80} value={productForm.name} onChange={(event) => setProductForm({ ...productForm, name: event.target.value })} /></div>
+          <div className="field"><label>SKU (optional)</label><input maxLength={64} value={productForm.sku} onChange={(event) => setProductForm({ ...productForm, sku: event.target.value })} /><span className="field-hint">Use a separate SKU or leave blank if you identify the item by barcode.</span></div>
+          <div className="field"><label>Barcode / UPC / EAN</label><input type="text" autoComplete="off" autoCapitalize="off" spellCheck={false} maxLength={64} value={productForm.barcode} onChange={(event) => setProductForm({ ...productForm, barcode: event.target.value.trimStart() })} placeholder="Click here, then scan the product" /><span className="field-hint">Keyboard-mode USB/Bluetooth readers type the code into this field. Keep leading zeros.</span></div>
+          <div className="field"><label>Category</label><input required list="category-options" value={productForm.categoryName} onChange={(event) => setProductForm({ ...productForm, categoryName: event.target.value })} /><datalist id="category-options">{categories.filter((category) => category !== 'All items').map((category) => <option key={category} value={category} />)}</datalist></div>
+          <div className="field"><label>Price · GHS</label><input required inputMode="decimal" placeholder="0.00" value={productForm.price} onChange={(event) => setProductForm({ ...productForm, price: event.target.value })} /></div>
+          <div className="field"><label>Initial / counted stock</label><input required type="number" min="0" step="0.001" value={productForm.stock} onChange={(event) => setProductForm({ ...productForm, stock: event.target.value })} /><span className="field-hint">Editing this value creates a stock-count movement.</span></div>
+          <div className="field"><label>Tax category</label><select required value={productForm.taxCategoryId} onChange={(event) => setProductForm({ ...productForm, taxCategoryId: event.target.value })}>{taxCategories.map((tax) => <option key={tax.id} value={tax.id}>{tax.name}</option>)}</select></div>
+          <div className="field"><label>Price mode</label><select value={productForm.priceMode} onChange={(event) => setProductForm({ ...productForm, priceMode: event.target.value as Product['priceMode'] })}><option value="inclusive">Tax inclusive</option><option value="exclusive">Tax exclusive</option></select></div>
+          <div className="field full"><label className="inline-check"><input type="checkbox" checked={productForm.active} onChange={(event) => setProductForm({ ...productForm, active: event.target.checked })} />Active in checkout</label></div>
+        </form>
       </Modal>}
 
       {modal === 'stock' && stockProduct && <Modal title={`Count stock · ${stockProduct.name}`} description="A physical count is a versioned adjustment. If another device changed stock, cloud sync holds the count for manager review rather than overwriting movements." onClose={() => setModal(null)} footer={<><button className="btn" onClick={() => setModal(null)}>Cancel</button><button form="stock-form" type="submit" className="btn primary"><Boxes size={14} />Save count</button></>}>
@@ -1393,8 +1654,13 @@ export function PosApp() {
         <form id="shift-form" className="form-grid" onSubmit={saveShift}><div className="field full"><label>{shiftFormMode === 'open' ? 'Opening float · GHS' : 'Counted cash · GHS'}</label><input required inputMode="decimal" value={shiftAmount} onChange={(event) => setShiftAmount(event.target.value)} /></div>{shiftFormMode === 'close' && activeShift && <><div className="field full"><label>Expected cash</label><input readOnly value={money(activeShift.expectedCashMinor)} /></div><div className="field full"><label>Variance reason (required if not zero)</label><textarea value={shiftReason} onChange={(event) => setShiftReason(event.target.value)} placeholder="Explain cash over/short" /></div></>}</form>
       </Modal>}
 
-      {modal === 'employee' && employeeForm && <Modal title={employeeForm.id ? 'Edit employee permissions' : 'Add employee'} description="Refund approval is limited by a per-transaction authorization ceiling. Cloud login invites are a separate setup action." onClose={() => setModal(null)} footer={<><button className="btn" onClick={() => setModal(null)}>Cancel</button><button form="employee-form" type="submit" className="btn primary"><Check size={14} />Save profile</button></>}>
-        <form id="employee-form" className="form-grid" onSubmit={saveEmployeeForm}><div className="field full"><label>Display name</label><input required value={employeeForm.displayName} onChange={(event) => setEmployeeForm({ ...employeeForm, displayName: event.target.value })} /></div><div className="field full"><label>Role</label><select value={employeeForm.role} onChange={(event) => setEmployeeForm({ ...employeeForm, role: event.target.value as UserRole })}><option value="cashier">Cashier · checkout, receipts, own shift</option><option value="manager">Manager · products, stock and reports</option><option value="owner" disabled={employee?.role !== 'owner'}>Owner · all operations and setup</option></select></div><div className="field full"><label>Refund limit per transaction · GHS</label><input type="number" min="0" step="0.01" placeholder={employeeForm.role === 'owner' ? 'Leave blank for no cap' : '0.00'} value={employeeForm.refundLimit} disabled={employee?.role !== 'owner'} onChange={(event) => setEmployeeForm({ ...employeeForm, refundLimit: event.target.value })} /><span className="field-hint">0 disables refunds. A blank, uncapped limit is allowed only for an owner profile. Only an owner can change limits; managers keep the current value.</span></div></form>
+      {modal === 'employee' && employeeForm && <Modal title={!employeeForm.id ? 'Invite employee' : employees.find((person) => person.id === employeeForm.id)?.status === 'invited' ? 'Resend staff invitation' : 'Edit employee permissions'} description={APP_DEMO_MODE ? 'Demo role profiles are local to this device.' : 'The owner invites staff by email. Invited staff choose their own password; access never comes from a public role selector.'} onClose={() => setModal(null)} footer={<><button className="btn" onClick={() => setModal(null)}>Cancel</button><button form="employee-form" type="submit" className="btn primary"><Check size={14} />{!APP_DEMO_MODE && (!employeeForm.id || employees.find((person) => person.id === employeeForm.id)?.status === 'invited') ? 'Send invitation' : 'Save profile'}</button></>}>
+        <form id="employee-form" className="form-grid" onSubmit={saveEmployeeForm}>
+          <div className="field full"><label>Display name</label><input required maxLength={100} value={employeeForm.displayName} onChange={(event) => setEmployeeForm({ ...employeeForm, displayName: event.target.value })} /></div>
+          {!APP_DEMO_MODE && <div className="field full"><label>Staff email</label><input type="email" autoComplete="email" required value={employeeForm.email ?? ''} readOnly={Boolean(employeeForm.id && employees.find((person) => person.id === employeeForm.id)?.status === 'active')} onChange={(event) => setEmployeeForm({ ...employeeForm, email: event.target.value })} /><span className="field-hint">A one-time invitation link will be sent to this address. Existing linked accounts cannot change email here.</span></div>}
+          <div className="field full"><label>Role</label><select value={employeeForm.role} onChange={(event) => setEmployeeForm({ ...employeeForm, role: event.target.value as UserRole })}><option value="cashier">Cashier · checkout, receipts, own shift</option><option value="manager">Manager · products, stock and reports</option><option value="owner" disabled={employee?.role !== 'owner' || (!APP_DEMO_MODE && !employeeForm.id)}>Owner · all operations and setup</option></select></div>
+          <div className="field full"><label>Refund limit per transaction · GHS</label><input type="number" min="0" step="0.01" placeholder={employeeForm.role === 'owner' ? 'Leave blank for no cap' : '0.00'} value={employeeForm.refundLimit} disabled={employee?.role !== 'owner'} onChange={(event) => setEmployeeForm({ ...employeeForm, refundLimit: event.target.value })} /><span className="field-hint">0 disables refunds. A blank, uncapped limit is allowed only for an owner profile. Only an owner can change limits.</span></div>
+        </form>
       </Modal>}
 
       {modal === 'tax' && taxForm && <Modal title={taxForm.id ? 'Edit tax profile' : 'Add tax profile'} description="Tax treatment and each component are snapshotted on every new sale line." onClose={() => setModal(null)} wide footer={<><button className="btn" onClick={() => setModal(null)}>Cancel</button><button form="tax-form" type="submit" className="btn primary"><ShieldCheck size={14} />Save tax profile</button></>}>

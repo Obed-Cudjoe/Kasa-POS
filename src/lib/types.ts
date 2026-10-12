@@ -33,6 +33,7 @@ export interface Product {
   storeId: string
   name: string
   sku: string
+  barcode?: string
   categoryId: string
   categoryName: string
   taxCategoryId: string
@@ -177,9 +178,10 @@ export interface Employee {
   storeId: string
   authUserId?: string
   displayName: string
+  email?: string
   role: UserRole
   refundLimitMinor?: number | null
-  status: 'active' | 'disabled'
+  status: 'invited' | 'active' | 'disabled'
   createdAt: string
 }
 

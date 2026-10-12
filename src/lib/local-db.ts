@@ -39,6 +39,9 @@ class PosDatabase extends Dexie {
       inventoryMovements: '&id, storeId, productId, createdAt, syncStatus, orderId, refundId',
       syncOutbox: '&eventId, storeId, eventType, entityId, createdAt, status',
     })
+    this.version(3).stores({
+      products: '&id, storeId, categoryId, sku, barcode, active, updatedAt',
+    })
   }
 }
 

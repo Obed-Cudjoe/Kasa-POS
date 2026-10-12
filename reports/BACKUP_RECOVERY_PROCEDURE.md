@@ -1,6 +1,8 @@
 # POS backup and recovery procedure
 
-**Version:** 1.0 · **Reviewed:** 2026-10-10 · **Status:** Runbook only; no backup, restore, or disaster-recovery exercise was executed.
+> **SUPERSEDED — DO NOT USE AS A CURRENT RUNBOOK.** This 2026-10-10 draft describes Supabase. Kasa POS now targets Cloudflare D1; the remote D1 database, backup policy, retention, export and restore have not been configured or verified. Create and test a D1-specific recovery runbook before live trading.
+
+**Version:** 1.0 · **Reviewed:** 2026-10-10 · **Status:** Historical runbook only; no backup, restore, or disaster-recovery exercise was executed.
 
 ## 1. Scope and important limitation
 

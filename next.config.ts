@@ -13,6 +13,7 @@ const withSerwist = withSerwistInit({
 })
 
 export default withSerwist({
+  allowedDevOrigins: ['*.e2b.app'],
   reactStrictMode: true,
   poweredByHeader: false,
   async headers() {

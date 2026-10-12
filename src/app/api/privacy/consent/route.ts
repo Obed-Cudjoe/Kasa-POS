@@ -24,7 +24,7 @@ export async function POST(request: Request) {
     if (body.purpose === 'digital_payment_contact') {
       const { data: payment, error: paymentError } = await actor.admin.from('payments')
         .select('method,status').eq('store_id', actor.storeId).eq('order_id', order.id).maybeSingle()
-      if (paymentError || !payment || !['card', 'momo'].includes(payment.method) || !['pending', 'initiated'].includes(payment.status)) {
+      if (paymentError || !payment || typeof payment.method !== 'string' || typeof payment.status !== 'string' || !['card', 'momo'].includes(payment.method) || !['pending', 'initiated'].includes(payment.status)) {
         return Response.json({ error: 'Payment-contact consent is only recorded for an unconfirmed card or mobile-money request.' }, { status: 409 })
       }
     }

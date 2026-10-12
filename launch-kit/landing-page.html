@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en-GH">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#11251d">
+  <meta name="description" content="Kasa POS is a simple checkout and stock tool designed for independent grocery and convenience shops in Ghana. Early access details coming soon.">
+  <title>Kasa POS — Everyday checkout for Ghana’s neighborhood shops</title>
+  <style>
+    :root{--forest:#11251d;--leaf:#1b4937;--mint:#b8f16c;--cream:#f7f7f1;--paper:#fff;--ink:#17261f;--muted:#66736b;--line:#e3e9e1;--orange:#e89546;--max:1140px}
+    *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--cream);color:var(--ink);font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;line-height:1.55}a{color:inherit;text-decoration:none}button{font:inherit}.wrap{width:min(var(--max),calc(100% - 40px));margin:auto}.top{background:var(--forest);color:white}.nav{height:78px;display:flex;align-items:center;justify-content:space-between}.brand{display:flex;align-items:center;gap:11px;font-weight:800;letter-spacing:-.04em;font-size:21px}.mark{width:38px;height:38px;border-radius:13px;background:var(--mint);display:grid;place-items:center;color:var(--forest);font-weight:900;font-size:19px;box-shadow:0 7px 22px #0002}.navlinks{display:flex;gap:28px;align-items:center;color:#d2dfd7;font-size:13px}.navlinks a:hover{color:var(--mint)}.navcta,.btn{display:inline-flex;align-items:center;justify-content:center;border-radius:999px;padding:12px 18px;background:var(--mint);color:#16251d;font-weight:800;font-size:13px;border:0;transition:transform .18s,box-shadow .18s}.navcta:hover,.btn:hover{transform:translateY(-2px);box-shadow:0 9px 26px #0002}.hero{background:var(--forest);color:white;padding:72px 0 90px;overflow:hidden;position:relative}.hero:before{content:"";position:absolute;right:-170px;top:-260px;width:600px;height:600px;border-radius:50%;background:radial-gradient(circle,#315844 0,#234631 42%,transparent 70%);opacity:.68}.hero-grid{display:grid;grid-template-columns:1fr .95fr;gap:54px;align-items:center;position:relative}.eyebrow{display:inline-flex;align-items:center;gap:9px;color:var(--mint);font-size:11px;text-transform:uppercase;letter-spacing:.16em;font-weight:800}.dot{width:7px;height:7px;border-radius:50%;background:var(--mint);box-shadow:0 0 0 5px #b8f16c22}.hero h1{font-size:clamp(42px,6vw,70px);line-height:1.02;letter-spacing:-.06em;max-width:640px;margin:22px 0}.hero h1 em{font-style:normal;color:var(--mint)}.hero p{color:#d1ded5;font-size:17px;max-width:535px;margin:0 0 27px}.actions{display:flex;gap:12px;flex-wrap:wrap}.btn.secondary{background:#ffffff0d;color:white;border:1px solid #ffffff3a}.micro{font-size:11px;color:#b5c7bb;margin-top:18px}.screen-wrap{position:relative}.screen{background:#fbfcf8;border:8px solid #263a30;border-radius:27px;box-shadow:0 36px 90px #07130d80;transform:rotate(1.2deg);overflow:hidden}.screenbar{height:42px;background:#f1f5ef;display:flex;align-items:center;padding:0 15px;gap:6px;border-bottom:1px solid var(--line)}.screenbar i{width:7px;height:7px;border-radius:50%;background:#c5d0c4}.screenbar span{margin-left:auto;font-size:9px;color:#738078}.screenbody{padding:20px;color:#193126}.mockhead{display:flex;justify-content:space-between;align-items:center;margin-bottom:15px}.mockhead strong{font-size:14px}.mockhead small{font-size:9px;color:#78877d}.pill{background:#eaf6df;color:#3d7143;border-radius:100px;padding:5px 9px;font-size:9px;font-weight:700}.mockstats{display:grid;grid-template-columns:1fr 1fr;gap:9px}.stat{background:white;border:1px solid #e7ece5;border-radius:12px;padding:12px}.stat small{font-size:8px;display:block;color:#77847a}.stat b{font-size:16px;letter-spacing:-.03em}.mockrow{display:flex;justify-content:space-between;padding:11px 2px;border-bottom:1px solid #edf0eb;font-size:10px}.mockrow:last-child{border:0}.mockbutton{display:block;background:var(--leaf);color:white;text-align:center;padding:11px;border-radius:9px;font-size:10px;font-weight:800;margin-top:13px}.float-tag{position:absolute;background:#fff;border:1px solid var(--line);border-radius:12px;padding:10px 13px;box-shadow:0 12px 36px #12261e20;font-size:10px;font-weight:800;color:#254634}.tag-one{left:-27px;bottom:36px}.tag-two{right:-15px;top:22px}.tag-icon{display:inline-grid;place-items:center;margin-right:6px;width:19px;height:19px;border-radius:6px;background:#ebf7de;color:#397345}.strip{background:white;border-bottom:1px solid var(--line)}.stripinner{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;padding:23px 0}.stripitem{display:flex;align-items:center;gap:10px;font-size:12px;font-weight:700;color:#456052}.check{width:22px;height:22px;border-radius:50%;background:#eaf5df;color:#398048;display:grid;place-items:center;font-size:13px;font-weight:900;flex:none}.section{padding:82px 0}.sectionhead{max-width:670px;margin-bottom:34px}.kicker{color:#477653;font-size:11px;letter-spacing:.15em;text-transform:uppercase;font-weight:800}.section h2{font-size:clamp(29px,4vw,44px);line-height:1.08;letter-spacing:-.05em;margin:12px 0}.sectionhead p{color:var(--muted);font-size:15px;margin:0}.cards{display:grid;grid-template-columns:repeat(3,1fr);gap:15px}.card{background:var(--paper);border:1px solid var(--line);border-radius:18px;padding:23px;box-shadow:0 10px 35px #21352206}.icon{width:40px;height:40px;border-radius:13px;background:#edf7e3;display:grid;place-items:center;font-size:20px}.card h3{font-size:16px;margin:17px 0 7px;letter-spacing:-.02em}.card p{font-size:13px;color:var(--muted);margin:0}.split{background:#eaf1e6}.splitgrid{display:grid;grid-template-columns:.9fr 1.1fr;gap:48px;align-items:center}.list{display:grid;gap:14px}.listrow{display:flex;gap:13px;align-items:flex-start}.listrow .check{margin-top:2px}.listrow strong{display:block;font-size:13px}.listrow span{display:block;color:var(--muted);font-size:12px;margin-top:2px}.steps{display:grid;grid-template-columns:repeat(3,1fr);gap:13px;margin-top:28px}.step{border-top:2px solid var(--leaf);padding:16px 4px}.step b{font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:#56805c}.step h3{font-size:14px;margin:7px 0}.step p{font-size:12px;color:var(--muted);margin:0}.pricing{background:white}.pricegrid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;align-items:stretch}.plan{border:1px solid var(--line);border-radius:19px;padding:24px;background:#fff}.plan.featured{background:var(--forest);color:white;border-color:var(--forest);box-shadow:0 19px 46px #12302224;transform:translateY(-7px)}.planlabel{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.13em;color:#5c8061}.featured .planlabel{color:var(--mint)}.price{font-size:32px;letter-spacing:-.06em;font-weight:900;margin:12px 0 3px}.price small{font-size:12px;letter-spacing:0;font-weight:600;color:var(--muted)}.featured .price small{color:#c0d0c6}.plandesc{min-height:39px;font-size:12px;color:var(--muted)}.featured .plandesc{color:#cfdbd2}.plan ul{list-style:none;padding:0;margin:20px 0;display:grid;gap:11px;font-size:12px}.plan li:before{content:"✓";color:#548c57;margin-right:9px;font-weight:900}.featured li:before{color:var(--mint)}.plan .btn{width:100%;background:#eaf4e2}.featured .btn{background:var(--mint)}.plan-note{font-size:10px;color:var(--muted);line-height:1.5;margin-top:12px}.featured .plan-note{color:#bdcfc3}.callout{border-radius:20px;background:#fff3e2;border:1px solid #f2dec3;padding:20px 22px;color:#624b31;font-size:12px;line-height:1.6;margin-top:24px}.quote{background:var(--forest);color:white}.quotegrid{display:grid;grid-template-columns:1fr 1fr;gap:30px;align-items:center}.quote h2{color:white}.quote p{color:#cddbd2;font-size:14px}.quote .big{font-size:24px;color:var(--mint);font-weight:900;letter-spacing:-.04em}.faq{display:grid;grid-template-columns:1fr 1fr;gap:14px}.faq article{padding:18px 0;border-bottom:1px solid var(--line)}.faq h3{font-size:14px;margin:0 0 7px}.faq p{font-size:12px;color:var(--muted);margin:0}.final{background:#dff0d2;padding:67px 0}.finalbox{background:var(--forest);border-radius:26px;padding:40px;color:white;display:flex;justify-content:space-between;gap:24px;align-items:center}.finalbox h2{margin:0 0 9px;font-size:clamp(26px,4vw,39px);letter-spacing:-.05em}.finalbox p{margin:0;color:#cbd8cf;font-size:13px}.footer{background:var(--forest);color:white;padding:35px 0 24px}.footerrow{display:flex;justify-content:space-between;gap:22px;align-items:flex-start}.footer p{max-width:600px;color:#b9c8bf;font-size:11px}.footnote{font-size:10px;color:#aebdb3;border-top:1px solid #ffffff1f;margin-top:22px;padding-top:17px}.placeholder{background:#fff8e8;color:#775721;border:1px dashed #c99c52;padding:11px 13px;border-radius:10px;font-size:11px;max-width:450px}.mobile{display:none}
+    @media(max-width:850px){.hero-grid{grid-template-columns:1fr;gap:45px}.screen-wrap{max-width:550px;margin:0 auto;width:100%}.hero{padding-top:55px}.cards,.pricegrid{grid-template-columns:1fr 1fr}.splitgrid{grid-template-columns:1fr;gap:20px}.plan.featured{transform:none}.finalbox{align-items:flex-start;flex-direction:column}.quotegrid{grid-template-columns:1fr}.navlinks{gap:15px}}
+    @media(max-width:580px){.wrap{width:min(var(--max),calc(100% - 28px))}.nav{height:67px}.navlinks{display:none}.mobile{display:inline-flex}.hero{padding:48px 0 63px}.hero h1{font-size:43px}.hero p{font-size:15px}.float-tag{display:none}.stripinner{grid-template-columns:1fr;gap:11px;padding:16px 0}.section{padding:61px 0}.cards,.pricegrid,.steps,.faq{grid-template-columns:1fr}.card{padding:19px}.pricegrid{gap:12px}.plan{padding:20px}.plan.featured{order:-1}.finalbox{padding:27px}.footerrow{flex-direction:column}.mockbody{padding:14px}.quote .big{font-size:21px}}
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div class="wrap nav">
+      <a class="brand" href="#top" aria-label="Kasa POS home"><span class="mark">K</span><span>Kasa POS</span></a>
+      <nav class="navlinks" aria-label="Main navigation"><a href="#features">Features</a><a href="#how">How it works</a><a href="#pricing">Pricing</a><a href="#faq">Questions</a></nav>
+      <a class="navcta" href="#pilot">Join the pilot <span class="mobile">&nbsp;↗</span></a>
+    </div>
+    <section class="hero" id="top">
+      <div class="wrap hero-grid">
+        <div>
+          <div class="eyebrow"><span class="dot"></span> Built for Ghana’s neighborhood shops</div>
+          <h1>Keep your shop moving. <em>Sale by sale.</em></h1>
+          <p>A straightforward checkout and stock tool for independent grocery and convenience shops. Record cash sales, keep an eye on stock and close shifts with clearer totals.</p>
+          <div class="actions"><a class="btn" href="#pilot">Request early access&nbsp; →</a><a class="btn secondary" href="#features">See how it works</a></div>
+          <div class="micro">Designed for busy shop owners and cashiers · GHS-first · Mobile/tablet friendly</div>
+        </div>
+        <div class="screen-wrap" aria-label="Illustrative POS dashboard preview">
+          <div class="float-tag tag-two"><span class="tag-icon">✓</span>Shift recorded</div>
+          <div class="screen">
+            <div class="screenbar"><i></i><i></i><i></i><span>Kasa POS · sample screen</span></div>
+            <div class="screenbody">
+              <div class="mockhead"><div><strong>Today at the shop</strong><br><small>Sample figures · GHS</small></div><span class="pill">SHIFT OPEN</span></div>
+              <div class="mockstats"><div class="stat"><small>Recorded sales</small><b>GHS 1,248</b></div><div class="stat"><small>Orders</small><b>36</b></div></div>
+              <div style="margin-top:14px"><div class="mockrow"><span>Rice · 1 kg</span><b>GHS 25.00</b></div><div class="mockrow"><span>Cooking oil · 1 L</span><b>GHS 32.00</b></div><div class="mockrow"><span>Soap bar</span><b>GHS 7.00</b></div></div>
+              <div class="mockbutton">Continue to checkout</div>
+            </div>
+          </div>
+          <div class="float-tag tag-one"><span class="tag-icon">↻</span>Cash sales can queue offline</div>
+        </div>
+      </div>
+    </section>
+  </header>
+
+  <div class="strip"><div class="wrap stripinner"><div class="stripitem"><span class="check">✓</span>Quick cash checkout</div><div class="stripitem"><span class="check">✓</span>Stock and shift tracking</div><div class="stripitem"><span class="check">✓</span>Offline-ready cash workflow</div></div></div>
+
+  <main>
+    <section class="section" id="features">
+      <div class="wrap">
+        <div class="sectionhead"><div class="kicker">Made for the counter</div><h2>The daily essentials, without the extra fuss.</h2><p>Kasa POS is being prepared for independent grocery and convenience retailers who need a clearer checkout and a better view of shop operations.</p></div>
+        <div class="cards">
+          <article class="card"><div class="icon">🧾</div><h3>Ring up a sale</h3><p>Find a product, review the total, record cash tender and change, and keep a transaction history.</p></article>
+          <article class="card"><div class="icon">📦</div><h3>See stock movement</h3><p>Track sale, return and stock-count movements so managers have a clearer picture of what is on hand.</p></article>
+          <article class="card"><div class="icon">🧮</div><h3>Review the shift</h3><p>Record opening float, expected cash and counted cash, then review daily sales and tax summaries.</p></article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section split" id="how">
+      <div class="wrap splitgrid">
+        <div><div class="kicker">Simple by design</div><h2>From first sale to shift close.</h2><p style="color:var(--muted);font-size:14px">Start with the products customers buy most. Keep the workflow understandable for owners and cashiers.</p></div>
+        <div class="list">
+          <div class="listrow"><span class="check">1</span><div><strong>Set up your catalogue</strong><span>Add a product name, SKU, GHS price, stock count and accountant-approved tax profile.</span></div></div>
+          <div class="listrow"><span class="check">2</span><div><strong>Give each worker their own role</strong><span>Use individual accounts and set who can manage products, shifts and refunds.</span></div></div>
+          <div class="listrow"><span class="check">3</span><div><strong>Check the till and reports</strong><span>Open and close shifts, reconcile cash and review stock and sales summaries.</span></div></div>
+        </div>
+      </div>
+      <div class="wrap steps"><div class="step"><b>Checkout</b><h3>Keep the line moving</h3><p>Tap products, check quantities and record cash received.</p></div><div class="step"><b>Operations</b><h3>Know what changed</h3><p>Review stock movements and flag counts that need a second look.</p></div><div class="step"><b>Reconciliation</b><h3>Close with clarity</h3><p>Compare expected cash with the amount counted at the end of a shift.</p></div></div>
+    </section>
+
+    <section class="section pricing" id="pricing">
+      <div class="wrap">
+        <div class="sectionhead"><div class="kicker">Draft launch pricing</div><h2>Start small. Add tools as your shop grows.</h2><p>Affordable, GHS-priced plans are being validated with shop owners. No enterprise-style contract is planned.</p></div>
+        <div class="pricegrid">
+          <article class="plan"><div class="planlabel">Starter</div><div class="price">GHS 0 <small>/ month</small></div><div class="plandesc">For one shop starting with the basics.</div><ul><li>1 location, 1 device</li><li>Up to 50 active products</li><li>Up to 100 recorded sales / month</li><li>Basic shift and daily totals</li></ul><a class="btn" href="#pilot">Ask about a pilot</a><div class="plan-note">Draft limits. Subscription enforcement is not yet implemented.</div></article>
+          <article class="plan featured"><div class="planlabel">Shop</div><div class="price">GHS 79 <small>/ shop / month</small></div><div class="plandesc">For a busy single-location retailer.</div><ul><li>Unlimited products and recorded sales</li><li>Up to 3 devices and 5 staff profiles</li><li>Advanced sales, tax and stock reports</li><li>WhatsApp support during published hours</li></ul><a class="btn" href="#pilot">Join the early-access list</a><div class="plan-note">Proposed price; confirm features and price before sale.</div></article>
+          <article class="plan"><div class="planlabel">Multi-shop · planned</div><div class="price">GHS 199 <small>/ month · draft</small></div><div class="plandesc">For owners planning more than one location.</div><ul><li>Up to 3 locations (planned)</li><li>Consolidated reporting (planned)</li><li>Shared catalogue and stock views (planned)</li><li>Extra branches priced separately</li></ul><a class="btn" href="#pilot">Register interest</a><div class="plan-note">Not available yet. Multi-location access is not implemented or certified.</div></article>
+        </div>
+        <div class="callout"><strong>Transparent payment note:</strong> any card or mobile-money processing charges are set by the merchant’s payment provider and merchant agreement. Kasa POS has no confirmed processing-fee markup or live payment readiness. Tax treatment must be reviewed by the shop’s adviser; this is not a GRA/E-VAT certification.</div>
+      </div>
+    </section>
+
+    <section class="section quote">
+      <div class="wrap quotegrid"><div><div class="kicker" style="color:var(--mint)">Built around real shop routines</div><h2>Designed for a busy counter, not a boardroom.</h2><p>Start with the fast-moving products, train the cashier on one clear checkout flow, and review your till and stock with the owner.</p></div><div><div class="big">A simpler way to see today’s work.</div><p>Use a dedicated device, each employee’s own login and a clear shift-close habit. If connectivity drops, cash sales can be recorded locally and synced when the device reconnects.</p></div></div>
+    </section>
+
+    <section class="section" id="faq">
+      <div class="wrap"><div class="sectionhead"><div class="kicker">Questions shop owners ask</div><h2>Good to know before you start.</h2></div>
+        <div class="faq">
+          <article><h3>Does Kasa POS work when the internet drops?</h3><p>The current app supports local cash-sale workflows and queues changes for sync. First-time setup/sign-in needs internet. Digital payment requests require connectivity and verified provider confirmation.</p></article>
+          <article><h3>Are the tax rates already approved?</h3><p>No. A shop owner must use an accountant/GRA-adviser-approved configuration. Demo rates are examples only; Kasa POS does not claim GRA/E-VAT certification.</p></article>
+          <article><h3>Can I accept card and mobile money?</h3><p>Not in the current setup: checkout is cash-only and no payment gateway is configured. Digital payments would require a separate product decision, merchant onboarding and end-to-end staging tests.</p></article>
+          <article><h3>Can I run multiple shops from one account?</h3><p>Multi-location access is not ready. The current launch configuration is one store per deployment; cross-shop isolation and shared staff access need more work.</p></article>
+        </div>
+      </div>
+    </section>
+
+    <section class="final" id="pilot"><div class="wrap"><div class="finalbox"><div><h2>Interested in a supervised early-access pilot?</h2><p>Tell us about your shop, devices and daily checkout routine. Pilot availability depends on readiness and location.</p></div><a class="btn" href="#contact">See contact status&nbsp; ↓</a></div></div></section>
+    <section class="section" id="contact" style="padding-top:34px;padding-bottom:46px"><div class="wrap"><div class="placeholder"><strong>Contact setup required before publication:</strong> add the verified Kasa POS WhatsApp Business link and monitored support email here. No support phone/email was supplied, so this page does not invent a contact channel. This draft is not connected to a lead-capture service.</div></div></section>
+  </main>
+  <footer class="footer"><div class="wrap"><div class="footerrow"><div><a class="brand" href="#top"><span class="mark">K</span><span>Kasa POS</span></a><p>POS checkout, stock and shift tools drafted for independent grocery and convenience retailers in Ghana.</p></div><div style="font-size:11px;color:#c7d4cb">Early-access draft · Contact details to be added</div></div><div class="footnote">Tax rates and treatment must be confirmed by the merchant’s adviser. Kasa POS is not represented as a GRA/E-VAT-certified system. Digital payments require merchant/provider setup and verification. All prices shown are draft assumptions and are not an offer until formally approved.</div></div></footer>
+</body>
+</html>
