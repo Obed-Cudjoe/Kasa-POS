@@ -1,8 +1,8 @@
 diff --git a/.env.example b/.env.example
-index 833072bb997db94bad80abf4b0dbdca45e06c6fb..6dfa7dfe4ac8ab43f52bcdc81992ee395f7f8ebd 100644
+index 833072bb997db94bad80abf4b0dbdca45e06c6fb..856a574941b6a6f8f6805d2d7cb821c7946f18f0 100644
 --- a/.env.example
 +++ b/.env.example
-@@ -1,22 +1,11 @@
+@@ -1,22 +1,12 @@
 -# Safe demo mode is the default. Set to false only after cloud setup and operator testing.
 +# Next.js build-time UI mode. Keep true until a D1 staging database, auth email, and Worker binding are configured.
  NEXT_PUBLIC_DEMO_MODE=true
@@ -13,7 +13,8 @@ index 833072bb997db94bad80abf4b0dbdca45e06c6fb..6dfa7dfe4ac8ab43f52bcdc81992ee39
 +# Runtime resources are bound by Cloudflare, not configured in this file.
 +# - D1: binding DB in wrangler.jsonc (add the Cloudflare database_id after creating the database)
 +# - Worker variables: PUBLIC_APP_URL, RESEND_FROM_EMAIL
-+# - Worker secrets: SESSION_SECRET (32+ chars), RESEND_API_KEY, PAYSTACK_SECRET_KEY (optional)
++# - Worker secrets: SESSION_SECRET (32+ chars), RESEND_API_KEY
++# No payment gateway secret is needed for the current cash-only checkout.
 +# Never place secrets, API keys, passwords, or tokens in this file or in NEXT_PUBLIC_* variables.
  
 -# Server-only secrets. Never prefix these with NEXT_PUBLIC_ and never commit them.
@@ -41,10 +42,10 @@ index 0000000000000000000000000000000000000000..c94711948a665d304dfc7016e1bebc49
 @@ -0,0 +1 @@
 +22.23.2
 diff --git a/README.md b/README.md
-index 32a34b1860613757158f731948b66c70bbbd9cae..c39263eb509adf4d47c13897e29c147fb4a9fef7 100644
+index 32a34b1860613757158f731948b66c70bbbd9cae..1a4769b0722b6b4a9765b4494b70e73829438fb6 100644
 --- a/README.md
 +++ b/README.md
-@@ -1,240 +1,77 @@
+@@ -1,240 +1,76 @@
 -# Kasa POS · Offline-first retail MVP
 +# Kasa POS · Cloudflare Workers + D1
  
@@ -52,7 +53,7 @@ index 32a34b1860613757158f731948b66c70bbbd9cae..c39263eb509adf4d47c13897e29c147f
 +Kasa POS is an offline-first retail POS for tablets and phones. The current implementation combines Next.js App Router, Cloudflare Workers/OpenNext, relational Cloudflare D1, custom cookie-based accounts, bcrypt-compatible password hashing (`bcryptjs`), and Dexie/IndexedDB for offline device work.
  
 -> **Important delivery boundary:** this workspace contains a runnable local project, Cloudflare Workers/OpenNext configuration, and starter migrations. It has **not** been published to GitHub, deployed to Cloudflare Workers, connected to a live Supabase project, or tested with a real payment merchant account. No Cloudflare account access, production credentials, domain configuration, or merchant onboarding were supplied. Demo payment buttons are simulations only. Do not use demo tax figures or receipts for live trade.
-+> **Deployment boundary:** The public `workers.dev` site is still in demo mode until the D1 database is created, its ID is added to `wrangler.jsonc`, the migrations and Worker secrets are configured, and a non-production account is tested. The application build alone does not connect a database or make payment processing live. Use synthetic data only for staging; the configured D1 jurisdiction is US and Ghana data-location/privacy implications still need review.
++> **Deployment boundary:** The public `workers.dev` site is still in demo mode until the D1 database is created, its ID is added to `wrangler.jsonc`, the migrations and Worker secrets are configured, and a non-production account is tested. The application build alone does not connect a database. Checkout is intentionally cash-only; no payment gateway is configured. Use synthetic data only for staging; the configured D1 jurisdiction is US and Ghana data-location/privacy implications still need review.
  
 -## What works in the local demo
 +## Features
@@ -74,13 +75,13 @@ index 32a34b1860613757158f731948b66c70bbbd9cae..c39263eb509adf4d47c13897e29c147f
 -- Supabase sync route skeleton with authenticated role checks, UUID event idempotency, an append-only inventory movement ledger, additive stock projection updates and stale physical-count conflicts.
 -- Paystack adapter for Ghana card and mobile-money requests, HMAC-verified webhooks, server-side transaction verification, timeouts and provider refund status handling.
 +- **Owner onboarding and staff access:** vendor owners can register a store; staff accounts are owner-invited only. Platform-admin access is privately provisioned, never selected on a public form. Passwords are bcrypt-hashed, sessions use `HttpOnly` same-site cookies, and account endpoints validate inputs and rate-limit requests.
-+- **Protected store APIs:** operational APIs require an authenticated store session and enforce role checks; Paystack webhooks require provider-signature validation. Auth registration, verification, invitation and reset endpoints are intentionally public but validated and throttled.
++- **Protected store APIs:** operational APIs require an authenticated store session and enforce role checks. Auth registration, verification, invitation and reset endpoints are intentionally public but validated and throttled. Paystack code is retained but dormant; it is not part of the cash-only checkout configuration.
 +- **Offline-first POS:** products, inventory, sales, refunds, shifts and an idempotent sync outbox are stored locally until sync is possible.
 +- **Barcode product setup:** owners/managers can scan or type a UPC/EAN/barcode into the product editor. Codes are unique within a store; SKU is optional.
 +- **Barcode checkout:** focus the **Scan barcode here** field and scan. Common USB/Bluetooth readers that operate as a keyboard/HID device enter the barcode as text; their Enter or Tab suffix adds one matching product to the cart. Search also matches barcode and SKU. No scanner-specific cloud service or camera permission is required. Verify the particular reader’s keyboard mode and suffix on the target tablet before buying or using it for live sales.
 +- **Receipt branding:** an owner can edit **Settings → Shop name on receipts**. The name appears on the receipt preview, PDF/share output, managed email PDF and thermal print header. In live mode it is stored in D1 and synchronized to signed-in devices.
 +- **Receipts and printers:** PDF, browser print, native share/mail, and optional ESC/POS Bluetooth/USB are available. Bluetooth/USB support depends on HTTPS, browser, OS and the exact printer model.
-+- **Payment safeguards:** card/MoMo uses a server-side Paystack adapter; never store raw card numbers, CVV/CVC or payment PINs. Demo confirmations remain simulations and move no money.
++- **Cash-only checkout:** cash is the only enabled tender; card and mobile-money options are hidden, and cash sales can be recorded offline. No gateway account, webhook, or payment API key is required. Optional Paystack routes remain dormant for possible future use.
 +- **Ghana readiness:** tax values are not legal advice. The app does not claim GRA E-VAT/CIS certification. Confirm tax treatment, receipt duties, privacy and Ghana Data Protection Act 2012 (Act 843) obligations before real customer data or live trading.
  
 -## Not included / not certified
@@ -127,8 +128,7 @@ index 32a34b1860613757158f731948b66c70bbbd9cae..c39263eb509adf4d47c13897e29c147f
 +4. Configure Worker **Secrets** in Cloudflare (or locally in the ignored `.dev.vars` file):
 +   - `SESSION_SECRET`: a randomly generated secret of at least 32 characters.
 +   - `RESEND_API_KEY`: Resend API key for verification, staff invites and password resets.
-+   - `PAYSTACK_SECRET_KEY`: optional; begin with a merchant-approved test key. Do not set a live key before merchant onboarding and end-to-end staging checks.
-+5. Configure Worker **Variables**: `PUBLIC_APP_URL` (HTTPS production URL), `RESEND_FROM_EMAIL` (verified sender), and if needed `PAYSTACK_DEFAULT_EMAIL` / `PAYMENT_RECEIPT_EMAIL`. The D1 binding is `DB`.
++5. Configure Worker **Variables**: `PUBLIC_APP_URL` (HTTPS staging/production URL) and `RESEND_FROM_EMAIL` (verified sender). The D1 binding is `DB`. Do not configure Paystack keys/webhooks for the current cash-only setup.
 +6. Build for Cloudflare with `npm run cf:build`; use `npm run cf:preview` for a local Worker-runtime preview. Configure the Cloudflare Git-connected build to use the OpenNext build/deploy commands documented in `reports/CLOUDFLARE_WORKERS_DEPLOYMENT_GUIDE.md` after reviewing it.
 +7. Keep `NEXT_PUBLIC_DEMO_MODE=true` during setup. Switch it to `false` only in the Cloudflare **build environment** after D1 migrations and secrets are ready. Then test owner registration, email verification, staff invitation, login, recovery, role boundaries and sync using synthetic data.
  
@@ -288,7 +288,7 @@ index 32a34b1860613757158f731948b66c70bbbd9cae..c39263eb509adf4d47c13897e29c147f
 -3. In the Cloudflare dashboard, open **Workers & Pages → `kasa-pos-pwa` → Settings → Variables and Secrets**. Add runtime variables for `NEXT_PUBLIC_DEMO_MODE=false`, `NEXT_PUBLIC_APP_URL`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `POS_STORE_ID`. Add server-only secrets using the Secret type: `SUPABASE_SERVICE_ROLE_KEY`; add `PAYSTACK_SECRET_KEY` only when using an onboarded merchant's test/live account, and optionally `RESEND_API_KEY`. Optional runtime values are `PAYSTACK_DEFAULT_EMAIL`, `PAYMENT_RECEIPT_EMAIL`, and `RECEIPT_FROM_EMAIL`. Never use `NEXT_PUBLIC_` for a server-only secret. Deploy preserves dashboard variables with Wrangler's `--keep-vars` option.
 -
 -4. Deploy first to the generated `workers.dev` address:
-+These checks do not verify a remote Cloudflare database, a real Resend email, a physical scanner/printer, a Ghana merchant account, or live payment settlement. Test with synthetic data and test payment credentials only. D1 staging is currently in the US jurisdiction; review applicable data-location and privacy implications before real users.
++These checks do not verify a remote Cloudflare database, real Resend email delivery, a physical scanner/printer, or Ghana compliance. Cash-only checkout is the current payment scope; dormant Paystack code is not configured or tested. Use synthetic data for staging. D1 staging is currently in the US jurisdiction; review applicable data-location and privacy implications before real users.
  
 -   ```bash
 -   npm ci
@@ -310,7 +310,7 @@ index 32a34b1860613757158f731948b66c70bbbd9cae..c39263eb509adf4d47c13897e29c147f
  
 -No live GitHub repository, Cloudflare deployment or custom-domain URL is claimed. The project folder is the current source of truth; regenerate the downloadable archive after any later edits.
 +- Never hardcode or paste credentials into this repository. Use Cloudflare Worker Secrets/Variables and an ignored local `.dev.vars` file.
-+- Do not store raw card details. The application is not payment-live until merchant onboarding, signed webhook delivery, amount/currency matching, refund behavior and settlement reconciliation are proven with a non-production account.
++- Cash-only checkout is enabled. No card/mobile-money gateway is configured. If adding one later, use hosted/tokenized payment handling—never collect raw card numbers, CVV/CVC or PINs—and complete merchant onboarding, signed webhook, amount/currency, refund and settlement tests first.
 +- IndexedDB is not encrypted at the application layer. Use a dedicated OS-encrypted device, strong screen lock, staff access controls and a reviewed backup/recovery plan.
 +- Review Ghana Act 843/DPC obligations, lawful basis/consent, data retention/deletion, processor terms and US D1 data location before live customer or employee records.
 +- Ghana tax figures are sample/demo values only and are not legal advice. No GRA E-VAT/CIS certification is claimed.
@@ -528,7 +528,7 @@ index 0000000000000000000000000000000000000000..9f9807bccdd2f931e2d96f25e257624b
 +At the weekly product review, group duplicates; count affected shops; assess revenue/safety/compliance impact; check whether a workaround exists; decide and document status. Do not promise a release date until the technical owner accepts it.
 diff --git a/launch-kit/landing-page.html b/launch-kit/landing-page.html
 new file mode 100644
-index 0000000000000000000000000000000000000000..ce0b8c5c5cbbb237df70d38e9c4e36a6fb79eea3
+index 0000000000000000000000000000000000000000..c10da73c5399e001fb009038464f33d6b1b9e932
 --- /dev/null
 +++ b/launch-kit/landing-page.html
 @@ -0,0 +1,107 @@
@@ -627,7 +627,7 @@ index 0000000000000000000000000000000000000000..ce0b8c5c5cbbb237df70d38e9c4e36a6
 +        <div class="faq">
 +          <article><h3>Does Kasa POS work when the internet drops?</h3><p>The current app supports local cash-sale workflows and queues changes for sync. First-time setup/sign-in needs internet. Digital payment requests require connectivity and verified provider confirmation.</p></article>
 +          <article><h3>Are the tax rates already approved?</h3><p>No. A shop owner must use an accountant/GRA-adviser-approved configuration. Demo rates are examples only; Kasa POS does not claim GRA/E-VAT certification.</p></article>
-+          <article><h3>Can I accept card and mobile money?</h3><p>Those flows depend on merchant onboarding, provider configuration and successful staging tests. Do not promise or use live digital payments until the provider and POS are fully verified.</p></article>
++          <article><h3>Can I accept card and mobile money?</h3><p>Not in the current setup: checkout is cash-only and no payment gateway is configured. Digital payments would require a separate product decision, merchant onboarding and end-to-end staging tests.</p></article>
 +          <article><h3>Can I run multiple shops from one account?</h3><p>Multi-location access is not ready. The current launch configuration is one store per deployment; cross-shop isolation and shared staff access need more work.</p></article>
 +        </div>
 +      </div>
@@ -641,7 +641,7 @@ index 0000000000000000000000000000000000000000..ce0b8c5c5cbbb237df70d38e9c4e36a6
 +</html>
 diff --git a/launch-kit/onboarding-guide.md b/launch-kit/onboarding-guide.md
 new file mode 100644
-index 0000000000000000000000000000000000000000..cffcd4f2d86ca8eeb5c61f5819e1b9195d3c49ab
+index 0000000000000000000000000000000000000000..837a46796e1168ccce02624e78933722eebcbeb5
 --- /dev/null
 +++ b/launch-kit/onboarding-guide.md
 @@ -0,0 +1,35 @@
@@ -673,7 +673,7 @@ index 0000000000000000000000000000000000000000..cffcd4f2d86ca8eeb5c61f5819e1b919
 +
 +- Use only synthetic sales, names, and contact data.
 +- Test cash checkout, tax snapshots, offline queue/sync, barcode retries, duplicate barcode rejection, receipt branding, and manager/owner permissions.
-+- If using Paystack, use a merchant-approved test account/key only. A redirect, screenshot or timeout is not payment proof.
++- Checkout is cash-only; do not configure Paystack keys or webhooks. If a gateway is considered later, treat it as a separate scoped change and test with merchant-approved credentials only.
 +- Print/sample receipts on the intended printer and review legal content separately. Browser Bluetooth/USB support varies by OS and browser.
 +- Review pending sync/conflicts before resetting browser data.
 +
@@ -1679,7 +1679,7 @@ index aae9453b91e89a379ce726989cb560573a19417a..0b9017cdd63753e5e7f538af60b18504
  | ID | Finding | Change made | Verification | Residual risk/status |
 diff --git a/reports/CLOUDFLARE_WORKERS_DEPLOYMENT_GUIDE.md b/reports/CLOUDFLARE_WORKERS_DEPLOYMENT_GUIDE.md
 new file mode 100644
-index 0000000000000000000000000000000000000000..bb32e36aaf0215eba8047bcd2804c557f7e23f4b
+index 0000000000000000000000000000000000000000..6d52b3f62816bd6cf79252948b3bdaac681e4168
 --- /dev/null
 +++ b/reports/CLOUDFLARE_WORKERS_DEPLOYMENT_GUIDE.md
 @@ -0,0 +1,81 @@
@@ -1721,15 +1721,15 @@ index 0000000000000000000000000000000000000000..bb32e36aaf0215eba8047bcd2804c557
 +
 +- `SESSION_SECRET`: a cryptographically random value of at least 32 characters. Use a unique value per environment.
 +- `RESEND_API_KEY`: the Resend key for the verified sender used by account verification, password resets and staff invitations.
-+- `PAYSTACK_SECRET_KEY`: optional for staging; use only a merchant-approved Paystack **test** key.
++
++Do **not** configure `PAYSTACK_SECRET_KEY` for the current cash-only setup. The optional Paystack code is retained but dormant.
 +
 +**Variables**
 +
 +- `PUBLIC_APP_URL`: exact HTTPS staging URL, such as the existing `workers.dev` URL.
 +- `RESEND_FROM_EMAIL`: sender address on a verified Resend domain.
-+- `PAYSTACK_DEFAULT_EMAIL` or `PAYMENT_RECEIPT_EMAIL`: optional fallback for Paystack requests.
 +
-+The D1 binding must be named `DB`. Keep all secrets out of GitHub, build logs, screenshots and chat. The ignored `.dev.vars` file is only for local Worker preview; `.dev.vars.example` contains no credentials.
++The D1 binding must be named `DB`. Keep all secrets out of GitHub, build logs, screenshots and chat. The ignored `.dev.vars` file is only for local Worker preview; `.dev.vars.example` contains no credentials. No Paystack variables, secrets, merchant setup or webhook configuration are needed for cash-only checkout.
 +
 +## 3. Configure Workers Builds
 +
@@ -1751,19 +1751,19 @@ index 0000000000000000000000000000000000000000..bb32e36aaf0215eba8047bcd2804c557
 +- `GET /api/health` returns JSON and `cloudConfigured: true`; the UI build is not demo mode.
 +- An owner can register, receive/complete email verification and sign in. Public owner registration must not grant staff or platform-admin roles.
 +- An owner can invite a synthetic cashier/manager. The recipient can accept a one-time link and choose a password. Password reset, verification resend, sign-out/revocation and role authorization work.
-+- Data routes reject requests without a same-origin signed-in session; the Paystack webhook rejects unsigned/invalid signatures.
++- Data routes reject requests without a same-origin signed-in session. Confirm checkout exposes only cash and records cash sales/refunds as expected; no payment gateway is configured or required. Retained Paystack endpoints are dormant and are outside this staging test.
 +- Create/edit a product with a barcode, sync it, sign in on a second staging device and scan by barcode into the checkout cart. Try a common USB/Bluetooth scanner in keyboard/HID mode and verify its configured Enter/Tab suffix. No physical scanner is tested by this code build.
 +- Change the receipt shop name as owner; confirm it syncs and appears in on-screen, PDF, email and thermal receipt headers. Verify exact printer/browser support separately.
 +- Test outbox retry, inventory conflicts, refunds and deletion/consent workflows with synthetic records only.
 +
-+The demo’s simulated card/MoMo actions do not move money. Do not add a live payment key until merchant onboarding, webhook delivery, amount/currency validation, refunds and settlement reconciliation have passed a separate review.
++The current checkout is cash-only. Paystack code remains unused and no gateway key should be set. If a gateway is considered later, first review merchant onboarding, webhook verification, amount/currency matching, refunds and settlement reconciliation.
 +
 +## 5. Ghana and operations review
 +
 +- Current staging D1 selection is US jurisdiction. Review Ghana data-location, cross-border transfer, processor contract, Data Protection Act 2012 (Act 843), DPC registration and data-subject request obligations before putting real user/customer data in D1.
 +- Replace privacy-notice placeholders and review lawful basis, consent, retention, deletion, access controls, device encryption, backup and incident response with qualified Ghanaian advisers.
 +- Sample tax values are not legal advice. Confirm GRA rates, legal receipt fields, E-VAT/CIS onboarding and certification. The application makes no certification claim.
-+- Cloudflare charges/limits and Workers overages, D1 usage, Resend, Paystack and domain renewal are separate. A `workers.dev` hostname is a free subdomain, not a registered custom domain; verify current pricing before accepting production traffic.
++- Cloudflare charges/limits and Workers overages, D1 usage, Resend, and domain renewal are separate. Paystack fees only become relevant if a gateway is intentionally added later. A `workers.dev` hostname is a free subdomain, not a registered custom domain; verify current pricing before accepting production traffic.
 diff --git a/reports/DEVICE_COMPATIBILITY_REPORT.md b/reports/DEVICE_COMPATIBILITY_REPORT.md
 index 519aa2a22265fc408b72607cd8b0ee51d5d69490..73c1a8cf6d877fb06ba818262f02502c9d3b525f 100644
 --- a/reports/DEVICE_COMPATIBILITY_REPORT.md
@@ -3059,11 +3059,15 @@ index 8936c1cad36a01386f1532437a18b36bd0ab8707..ba27d90dadad695860d87ea0865f9e08
        }
        processingStatus = isSuccess || isFailure ? 'processed' : 'ignored'
 diff --git a/src/app/privacy/page.tsx b/src/app/privacy/page.tsx
-index 3c8acab1dd26f50179b14c392e9c2e876189f8a8..9168654c93c197bdf55eee8f096d91f3579bd0ab 100644
+index 3c8acab1dd26f50179b14c392e9c2e876189f8a8..0d76e623839b053d7f63ff8758fd0d75524adac5 100644
 --- a/src/app/privacy/page.tsx
 +++ b/src/app/privacy/page.tsx
-@@ -32,7 +32,7 @@ export default function PrivacyPage() {
-           <li><strong>Payment contact:</strong> if a customer agrees, the cashier may send the customer’s email address (and for mobile money, phone number and selected network) to the configured payment provider to initiate or verify that specific payment. Contact details are not written into the POS order by this application.</li>
+@@ -29,24 +29,24 @@ export default function PrivacyPage() {
+       <section style={sectionStyle}>
+         <h2>What may be used, and why?</h2>
+         <ul>
+-          <li><strong>Payment contact:</strong> if a customer agrees, the cashier may send the customer’s email address (and for mobile money, phone number and selected network) to the configured payment provider to initiate or verify that specific payment. Contact details are not written into the POS order by this application.</li>
++          <li><strong>Payment contact:</strong> checkout is cash-only in this configuration. The POS does not send customer email addresses, phone numbers or network details to a payment gateway. If a gateway is enabled in the future, this notice and consent flow must be reviewed first.</li>
            <li><strong>Receipt email:</strong> if the customer asks for it, the entered email address is sent to the configured receipt-email service with the receipt attachment. It is not saved in the local POS order by this application.</li>
            <li><strong>Sales and tax records:</strong> item, amount, tax, tender status, store/device identifiers and the cashier’s staff identity are used to operate the till, reconcile payment, manage stock, prevent duplicate refunds and meet applicable accounting/tax duties.</li>
 -          <li><strong>Consent audit:</strong> when cloud service is configured and its migration is installed, the system records the order reference, purpose, notice version, time and staff member. It does not record the customer’s email address or phone number in this audit entry.</li>
@@ -3071,19 +3075,26 @@ index 3c8acab1dd26f50179b14c392e9c2e876189f8a8..9168654c93c197bdf55eee8f096d91f3
          </ul>
          <p>Marketing is a separate purpose. Payment or receipt consent is not marketing consent; this POS template does not request marketing opt-in during checkout.</p>
        </section>
-@@ -40,8 +40,8 @@ export default function PrivacyPage() {
+ 
        <section style={sectionStyle}>
          <h2>Payments and storage</h2>
-         <p>Card details should be entered only on the payment provider’s hosted page. This POS is designed not to collect or store full card numbers, CVV/CVC or PINs. Do not type payment credentials into POS fields, notes, or support messages. Mobile-money authentication is completed with the provider/network, not by storing a PIN in the POS.</p>
+-        <p>Card details should be entered only on the payment provider’s hosted page. This POS is designed not to collect or store full card numbers, CVV/CVC or PINs. Do not type payment credentials into POS fields, notes, or support messages. Mobile-money authentication is completed with the provider/network, not by storing a PIN in the POS.</p>
 -        <p>Business and staff data may be held in the browser’s IndexedDB for offline operation and, when configured, in the store’s Supabase database. Browser-local data is <strong>not application-encrypted at rest</strong> in this version. Use a dedicated, OS-encrypted device with a strong screen lock, restrict staff access, and remove local data securely before reassignment. Do not use a shared/public device for live sales.</p>
 -        <p>Supabase, payment, and email-provider settings and contractual terms must be reviewed by the store owner. This notice does not promise that a provider, account, backup, or device is configured correctly.</p>
++        <p>Cash-only checkout is enabled; no card or mobile-money gateway request is made. The POS does not collect or store full card numbers, CVV/CVC or payment PINs. If a gateway is added later, use its hosted/tokenized payment flow and update this notice before collecting any related contact data.</p>
 +        <p>Business and staff data may be held in the browser’s IndexedDB for offline operation and, when configured, in the store’s Cloudflare D1 database through Cloudflare Workers. The current staging database location is in the United States; review Ghana data-location, transfer and privacy implications before storing real customer or employee data. Browser-local data is <strong>not application-encrypted at rest</strong> in this version. Use a dedicated, OS-encrypted device with a strong screen lock, restrict staff access, and remove local data securely before reassignment. Do not use a shared/public device for live sales.</p>
-+        <p>Cloudflare D1/Workers, payment, and email-provider settings and contractual terms must be reviewed by the store owner. This notice does not promise that a provider, account, backup, or device is configured correctly.</p>
++        <p>Cloudflare D1/Workers and email-provider settings and contractual terms must be reviewed by the store owner. Payment-gateway processing is not enabled in this cash-only setup. This notice does not promise that a provider, account, backup, or device is configured correctly.</p>
+       </section>
+ 
+       <section style={sectionStyle}>
+         <h2>Consent and choice</h2>
+-        <p>Before a digital payment request is made, the cashier must explain the contact-data purpose and tick the payment consent box only after the customer agrees. For an emailed receipt, the cashier must confirm that the customer asked for it. Do not enter contact details or send a request if the customer declines; offer a paper/PDF receipt or another payment method where available. No marketing consent is implied.</p>
++        <p>Checkout is cash-only, so no payment-gateway contact details or payment-contact consent are requested. For an emailed receipt, the cashier must confirm that the customer asked for it before entering an email address. Do not enter or send the address if the customer declines; offer a paper/PDF receipt instead. No marketing consent is implied. Review this notice and obtain appropriate consent before enabling any gateway in the future.</p>
        </section>
  
        <section style={sectionStyle}>
 diff --git a/src/components/pos-app.tsx b/src/components/pos-app.tsx
-index 5021b63f888917fafbf40e07fa40de3f5ccfc36e..c028fd2ae6aa57ebf0e3456af0b38263564b96c7 100644
+index 5021b63f888917fafbf40e07fa40de3f5ccfc36e..b80187434a9ed270c71d673fbd06c00b55e37ab3 100644
 --- a/src/components/pos-app.tsx
 +++ b/src/components/pos-app.tsx
 @@ -1,15 +1,16 @@
@@ -3105,7 +3116,7 @@ index 5021b63f888917fafbf40e07fa40de3f5ccfc36e..c028fd2ae6aa57ebf0e3456af0b38263
  import { ensureDemoData, DEMO_DEVICE_ID } from '@/lib/demo-seed'
  import { calculateLine, summarizeLines, taxLabel } from '@/lib/tax'
  import { formatMoney, inputFromMinor, parseMoneyInput } from '@/lib/money'
-@@ -19,23 +20,22 @@ import {
+@@ -19,23 +20,23 @@ import {
    saveProduct, saveTaxCategory,
  } from '@/lib/pos-ops'
  import { downloadReceiptPdf, printReceiptEscPos, shareReceipt } from '@/lib/receipt'
@@ -3129,10 +3140,16 @@ index 5021b63f888917fafbf40e07fa40de3f5ccfc36e..c028fd2ae6aa57ebf0e3456af0b38263
 -const CLOUD_PUBLIC_READY = Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY)
 -const APP_DEMO_MODE = process.env.NEXT_PUBLIC_DEMO_MODE !== 'false' || !CLOUD_PUBLIC_READY
 +const APP_DEMO_MODE = process.env.NEXT_PUBLIC_DEMO_MODE !== 'false'
++const CASH_ONLY_CHECKOUT = true // Retain gateway code, but hide/guard non-cash checkout until explicitly re-scoped.
  const money = (minor: number, currency = 'GHS') => formatMoney(minor, currency)
  const initials = (name: string) => name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join('').toUpperCase() || 'KS'
  const titleCase = (value: string) => value.replaceAll('_', ' ').replace(/\b\w/g, (char) => char.toUpperCase())
-@@ -115,6 +115,7 @@ export function PosApp() {
+@@ -110,11 +111,11 @@ export function PosApp() {
+   const [online, setOnline] = useState(true)
+   const [syncBusy, setSyncBusy] = useState(false)
+   const [cloudSignedIn, setCloudSignedIn] = useState(false)
+-  const [cloudPaymentEnabled, setCloudPaymentEnabled] = useState(false)
+   const [toast, setToast] = useState<ToastState>(null)
    const [modal, setModal] = useState<ModalName>(null)
    const [cart, setCart] = useState<Record<string, number>>({})
    const [search, setSearch] = useState('')
@@ -3207,13 +3224,12 @@ index 5021b63f888917fafbf40e07fa40de3f5ccfc36e..c028fd2ae6aa57ebf0e3456af0b38263
            if (!mounted) return
            await refreshLocalState()
            const rememberedId = localStorage.getItem('pos-selected-employee')
-@@ -230,34 +246,62 @@ export function PosApp() {
+@@ -230,35 +246,59 @@ export function PosApp() {
              const remembered = await db.employees.get(rememberedId)
              if (remembered?.status === 'active') setEmployee(remembered)
            }
 -          const health = await fetch('/api/health', { cache: 'no-store' }).then((response) => response.json()).catch(() => null)
-+          const health = await fetch('/api/health', { cache: 'no-store' }).then((response) => response.json() as Promise<{ paymentsConfigured?: boolean }>).catch(() => null)
-           if (mounted) setCloudPaymentEnabled(Boolean(health?.paymentsConfigured))
+-          if (mounted) setCloudPaymentEnabled(Boolean(health?.paymentsConfigured))
          } else {
 +          const cachedShopName = await getMeta<string>('shop-name', '')
 +          if (cachedShopName) { setShopName(cachedShopName); setShopNameDraft(cachedShopName) }
@@ -3284,11 +3300,11 @@ index 5021b63f888917fafbf40e07fa40de3f5ccfc36e..c028fd2ae6aa57ebf0e3456af0b38263
            }
            if (mounted) await refreshLocalState()
 -          const health = await fetch('/api/health', { cache: 'no-store' }).then((response) => response.json()).catch(() => null)
-+          const health = await fetch('/api/health', { cache: 'no-store' }).then((response) => response.json() as Promise<{ paymentsConfigured?: boolean }>).catch(() => null)
-           if (mounted) setCloudPaymentEnabled(Boolean(health?.paymentsConfigured))
+-          if (mounted) setCloudPaymentEnabled(Boolean(health?.paymentsConfigured))
          }
        } catch (error) {
-@@ -267,7 +311,16 @@ export function PosApp() {
+         showToast(error instanceof Error ? error.message : 'The POS could not start.', 'error')
+@@ -267,7 +307,16 @@ export function PosApp() {
        }
      }
      void boot()
@@ -3306,7 +3322,7 @@ index 5021b63f888917fafbf40e07fa40de3f5ccfc36e..c028fd2ae6aa57ebf0e3456af0b38263
      window.addEventListener('online', updateOnline)
      window.addEventListener('offline', updateOnline)
      const installListener = (event: Event) => {
-@@ -300,7 +353,7 @@ export function PosApp() {
+@@ -300,7 +349,7 @@ export function PosApp() {
    const categories = useMemo(() => ['All items', ...Array.from(new Set(products.map((product) => product.categoryName))).sort()], [products])
    const filteredProducts = useMemo(() => products.filter((product) => {
      const term = search.trim().toLowerCase()
@@ -3315,7 +3331,7 @@ index 5021b63f888917fafbf40e07fa40de3f5ccfc36e..c028fd2ae6aa57ebf0e3456af0b38263
      const matchesCategory = activeCategory === 'All items' || product.categoryName === activeCategory
      return matchesTerm && matchesCategory
    }), [products, search, activeCategory])
-@@ -329,6 +382,8 @@ export function PosApp() {
+@@ -329,6 +378,8 @@ export function PosApp() {
      setSyncBusy(true)
      try {
        const result = await syncNow()
@@ -3324,7 +3340,7 @@ index 5021b63f888917fafbf40e07fa40de3f5ccfc36e..c028fd2ae6aa57ebf0e3456af0b38263
        await refreshLocalState()
        if (result.pushed.conflicts?.length) showToast(`${result.pushed.conflicts.length} change(s) need review. Inventory counts are never silently overwritten.`, 'error')
        else if (!quiet) showToast(`Sync complete · ${result.pushed.sent} change(s) sent.`, 'success')
-@@ -337,7 +392,7 @@ export function PosApp() {
+@@ -337,7 +388,7 @@ export function PosApp() {
      } finally {
        setSyncBusy(false)
      }
@@ -3333,7 +3349,7 @@ index 5021b63f888917fafbf40e07fa40de3f5ccfc36e..c028fd2ae6aa57ebf0e3456af0b38263
  
    useEffect(() => {
      if (!cloudSignedIn || APP_DEMO_MODE || !online) return
-@@ -352,17 +407,6 @@ export function PosApp() {
+@@ -352,17 +403,6 @@ export function PosApp() {
      void syncData(true)
    }, [cloudSignedIn, online, pendingCount])
  
@@ -3351,7 +3367,7 @@ index 5021b63f888917fafbf40e07fa40de3f5ccfc36e..c028fd2ae6aa57ebf0e3456af0b38263
  
    const setEmployeeSession = useCallback(async (selected: Employee) => {
      await finishLogin(selected)
-@@ -371,24 +415,27 @@ export function PosApp() {
+@@ -371,24 +411,27 @@ export function PosApp() {
  
    const signInCloud = useCallback(async (event: FormEvent<HTMLFormElement>) => {
      event.preventDefault()
@@ -3388,7 +3404,7 @@ index 5021b63f888917fafbf40e07fa40de3f5ccfc36e..c028fd2ae6aa57ebf0e3456af0b38263
        await pullCloud()
        await refreshLocalState()
        showToast(`Welcome, ${data.employee.displayName}.`, 'success')
-@@ -399,6 +446,123 @@ export function PosApp() {
+@@ -399,6 +442,123 @@ export function PosApp() {
      }
    }, [loginEmail, loginPassword, refreshLocalState, showToast])
  
@@ -3512,7 +3528,7 @@ index 5021b63f888917fafbf40e07fa40de3f5ccfc36e..c028fd2ae6aa57ebf0e3456af0b38263
    const signOut = useCallback(async () => {
      if (APP_DEMO_MODE) {
        setEmployee(null)
-@@ -407,8 +571,17 @@ export function PosApp() {
+@@ -407,8 +567,17 @@ export function PosApp() {
        return
      }
      const employeeToClear = employee ?? cachedOfflineEmployee
@@ -3532,7 +3548,7 @@ index 5021b63f888917fafbf40e07fa40de3f5ccfc36e..c028fd2ae6aa57ebf0e3456af0b38263
      if (employeeToClear) await clearOfflinePin(employeeToClear.id)
      await db.appMeta.delete('cached-employee')
      setCloudSignedIn(false)
-@@ -417,8 +590,10 @@ export function PosApp() {
+@@ -417,8 +586,10 @@ export function PosApp() {
      setOfflinePinAvailable(false)
      setOfflinePinInput('')
      setLoginPassword('')
@@ -3544,7 +3560,15 @@ index 5021b63f888917fafbf40e07fa40de3f5ccfc36e..c028fd2ae6aa57ebf0e3456af0b38263
  
    const unlockOffline = async (event: FormEvent<HTMLFormElement>) => {
      event.preventDefault()
-@@ -526,14 +701,9 @@ export function PosApp() {
+@@ -495,6 +666,7 @@ export function PosApp() {
+   }
+ 
+   const startDigitalPayment = async () => {
++    if (CASH_ONLY_CHECKOUT) { showToast('This store is configured for cash-only sales.', 'error'); return }
+     if (!employee || !activeShift || (paymentMethod !== 'card' && paymentMethod !== 'momo')) return
+     if (!APP_DEMO_MODE && !paymentConsent) { showToast('Confirm that the customer agreed to payment-contact processing before continuing.', 'error'); return }
+     let requestContext: PendingPayment | null = null
+@@ -526,14 +698,9 @@ export function PosApp() {
          setPendingPayment((value) => value ? { ...value, retryable: true, message: 'The pending sale is safely stored here, but cloud sync did not acknowledge it. No charge request was sent.' } : value)
          return
        }
@@ -3561,7 +3585,7 @@ index 5021b63f888917fafbf40e07fa40de3f5ccfc36e..c028fd2ae6aa57ebf0e3456af0b38263
          body: JSON.stringify({ orderId: pending.order.id, paymentId: pending.payment.id, email: customerEmail.trim(), phone: customerPhone.trim(), network: momoNetwork }),
        })
        const data = await response.json() as { error?: string; reference?: string; authorizationUrl?: string; displayText?: string; message?: string; providerStatus?: string }
-@@ -574,10 +744,8 @@ export function PosApp() {
+@@ -574,10 +741,8 @@ export function PosApp() {
      if (!current.reference || !online || !cloudSignedIn || APP_DEMO_MODE || paymentChecking) return
      setPaymentChecking(true)
      try {
@@ -3573,7 +3597,7 @@ index 5021b63f888917fafbf40e07fa40de3f5ccfc36e..c028fd2ae6aa57ebf0e3456af0b38263
          body: JSON.stringify({ orderId: current.orderId, reference: current.reference }), cache: 'no-store',
        })
        const data = await response.json() as { error?: string; paid?: boolean; providerStatus?: string; message?: string; transactionId?: string }
-@@ -630,11 +798,9 @@ export function PosApp() {
+@@ -630,11 +795,9 @@ export function PosApp() {
        await syncData(true)
        const outboxEvent = await db.syncOutbox.where('entityId').equals(current.orderId).first()
        if (outboxEvent && outboxEvent.status !== 'synced') throw new Error('The pending sale has not synced to cloud; no provider request was sent.')
@@ -3587,7 +3611,16 @@ index 5021b63f888917fafbf40e07fa40de3f5ccfc36e..c028fd2ae6aa57ebf0e3456af0b38263
          body: JSON.stringify({ orderId: current.orderId, paymentId: current.paymentId, email: customerEmail.trim(), phone: customerPhone.trim(), network: momoNetwork }),
        })
        const data = await response.json() as { error?: string; reference?: string; authorizationUrl?: string; displayText?: string; message?: string; providerStatus?: string }
-@@ -707,6 +873,21 @@ export function PosApp() {
+@@ -683,7 +846,7 @@ export function PosApp() {
+   }, [pendingPayment, online, cloudSignedIn, modal, verifyPendingPayment])
+ 
+   useEffect(() => {
+-    if (!employee || APP_DEMO_MODE || callbackHandled.current || typeof window === 'undefined') return
++    if (!employee || APP_DEMO_MODE || CASH_ONLY_CHECKOUT || callbackHandled.current || typeof window === 'undefined') return
+     const params = new URLSearchParams(window.location.search)
+     if (params.get('payment') !== 'return') return
+     const orderId = params.get('order')
+@@ -707,6 +870,21 @@ export function PosApp() {
      const stock = inventory.find((item) => item.productId === product.id)?.quantityOnHand ?? 0
      if (stock <= 0) showToast(`${product.name} is at zero on this device. Check stock before confirming a sale.`, 'plain')
    }
@@ -3609,7 +3642,7 @@ index 5021b63f888917fafbf40e07fa40de3f5ccfc36e..c028fd2ae6aa57ebf0e3456af0b38263
    const setQuantity = (productId: string, quantity: number) => setCart((current) => {
      const next = { ...current }
      if (quantity <= 0) delete next[productId]
-@@ -779,9 +960,8 @@ export function PosApp() {
+@@ -779,9 +957,8 @@ export function PosApp() {
            await syncData(true)
            const cloudEvent = await db.syncOutbox.where('entityId').equals(result.refund.id).first()
            if (cloudEvent?.status === 'synced') {
@@ -3621,7 +3654,7 @@ index 5021b63f888917fafbf40e07fa40de3f5ccfc36e..c028fd2ae6aa57ebf0e3456af0b38263
                body: JSON.stringify({ refundId: result.refund.id }), cache: 'no-store',
              })
              const data = await response.json() as { error?: string; status?: string; providerRefundId?: string; message?: string }
-@@ -812,9 +992,8 @@ export function PosApp() {
+@@ -812,9 +989,8 @@ export function PosApp() {
    const checkRefundProvider = async (refund: Refund) => {
      if (APP_DEMO_MODE || !online || !cloudSignedIn) { showToast('Provider status check requires an online signed-in cloud session.', 'plain'); return }
      try {
@@ -3632,7 +3665,7 @@ index 5021b63f888917fafbf40e07fa40de3f5ccfc36e..c028fd2ae6aa57ebf0e3456af0b38263
          body: JSON.stringify({ refundId: refund.id }), cache: 'no-store',
        })
        const data = await response.json() as { error?: string; status?: string; providerRefundId?: string; message?: string }
-@@ -826,14 +1005,42 @@ export function PosApp() {
+@@ -826,14 +1002,42 @@ export function PosApp() {
      } catch (error) { showToast(error instanceof Error ? error.message : 'Refund status could not be checked.', 'error') }
    }
  
@@ -3677,7 +3710,7 @@ index 5021b63f888917fafbf40e07fa40de3f5ccfc36e..c028fd2ae6aa57ebf0e3456af0b38263
        taxCategoryId: taxCategories[0]?.id ?? '', price: '', priceMode: 'inclusive', stock: '0', active: true,
      })
      setModal('product')
-@@ -851,14 +1058,14 @@ export function PosApp() {
+@@ -851,14 +1055,14 @@ export function PosApp() {
          const previous = products.find((product) => product.id === productForm.id)
          if (!previous) throw new Error('Product is no longer available on this device.')
          const updated: Product = {
@@ -3694,7 +3727,7 @@ index 5021b63f888917fafbf40e07fa40de3f5ccfc36e..c028fd2ae6aa57ebf0e3456af0b38263
        }
        setModal(null)
        setProductForm(null)
-@@ -954,20 +1161,29 @@ export function PosApp() {
+@@ -954,20 +1158,29 @@ export function PosApp() {
    }
  
    const openEmployeeForm = (person?: Employee) => {
@@ -3729,7 +3762,7 @@ index 5021b63f888917fafbf40e07fa40de3f5ccfc36e..c028fd2ae6aa57ebf0e3456af0b38263
      const previousLimit = existing ? (existing.refundLimitMinor === undefined ? 0 : existing.refundLimitMinor) : 0
      if (employee.role === 'owner' && !employeeForm.refundLimit.trim() && employeeForm.role !== 'owner') {
        showToast('Only an owner profile may have no per-transaction refund cap; set a finite limit for staff.', 'error')
-@@ -980,44 +1196,49 @@ export function PosApp() {
+@@ -980,44 +1193,49 @@ export function PosApp() {
        showToast('Enter a valid non-negative refund limit in GHS, or leave it blank for no cap on an owner profile.', 'error')
        return
      }
@@ -3810,7 +3843,7 @@ index 5021b63f888917fafbf40e07fa40de3f5ccfc36e..c028fd2ae6aa57ebf0e3456af0b38263
      } catch (error) { showToast(error instanceof Error ? error.message : 'Staff profile could not be saved.', 'error') }
    }
  
-@@ -1034,23 +1255,21 @@ export function PosApp() {
+@@ -1034,23 +1252,21 @@ export function PosApp() {
      if (!receiptOrder || !receiptEmail.trim()) { showToast('Enter a recipient email address.', 'error'); return }
      if (!receiptConsent) { showToast('Confirm that the customer asked to receive this receipt by email.', 'error'); return }
      if (APP_DEMO_MODE || !cloudSignedIn) {
@@ -3838,7 +3871,7 @@ index 5021b63f888917fafbf40e07fa40de3f5ccfc36e..c028fd2ae6aa57ebf0e3456af0b38263
        showToast(`${error instanceof Error ? error.message : 'Email failed.'} Opened share/PDF fallback.`, 'error')
      }
    }
-@@ -1058,7 +1277,7 @@ export function PosApp() {
+@@ -1058,7 +1274,7 @@ export function PosApp() {
    const printThermal = async (transport: 'bluetooth' | 'usb') => {
      if (!receiptOrder) return
      try {
@@ -3847,7 +3880,7 @@ index 5021b63f888917fafbf40e07fa40de3f5ccfc36e..c028fd2ae6aa57ebf0e3456af0b38263
        showToast(`Sent receipt to ${name}. Check the printed paper; browser printer APIs cannot verify a complete print.`, 'success')
      } catch (error) {
        showToast(`${error instanceof Error ? error.message : 'Printer connection failed.'} Use Print or PDF fallback.`, 'error')
-@@ -1082,8 +1301,8 @@ export function PosApp() {
+@@ -1082,8 +1298,8 @@ export function PosApp() {
        <main className="login-screen">
          <section className="login-card">
            <div className="login-brand"><span className="brand-mark">K</span><div><strong className="brand-name">Kasa POS</strong><span className="brand-caption">Offline-first retail checkout</span></div></div>
@@ -3858,7 +3891,7 @@ index 5021b63f888917fafbf40e07fa40de3f5ccfc36e..c028fd2ae6aa57ebf0e3456af0b38263
            {APP_DEMO_MODE ? <>
              <div className="info-note"><strong>Demo only.</strong> Cash can be recorded locally. Card/MoMo buttons are explicitly simulated and do not contact a provider or move money.</div>
              <div className="demo-user-list">
-@@ -1100,13 +1319,38 @@ export function PosApp() {
+@@ -1100,13 +1316,38 @@ export function PosApp() {
                  <div className="field full"><button className="btn primary" disabled={loginBusy || offlinePinInput.length < 6}>{loginBusy ? <Loader2 size={14} className="spin" /> : <WifiOff size={14} />}{loginBusy ? 'Unlocking…' : 'Unlock offline workspace'}</button></div>
                </form> : <div className="attention-note" style={{ marginTop: 12 }}><AlertTriangle size={15} />No offline PIN is registered for this staff profile. Reconnect and sign in to create one before using this profile offline.</div>}
                <div className="field-hint" style={{ marginTop: 8 }}>Offline PIN is a device unlock, not cloud authentication. Keep the tablet’s screen lock enabled; local POS data is stored in browser storage.</div>
@@ -3900,7 +3933,7 @@ index 5021b63f888917fafbf40e07fa40de3f5ccfc36e..c028fd2ae6aa57ebf0e3456af0b38263
            </>}
            <div className="store-card" style={{ marginTop: 17, borderColor: 'var(--line)', background: '#f8fbf8', color: 'var(--ink-soft)' }}><div className="store-card-title">{onlineLabel}</div><div className="store-card-sub" style={{ color: 'var(--ink-soft)' }}>Your local data is stored in this browser. Do not clear site storage before syncing or backing up records.</div></div>
          </section>
-@@ -1143,7 +1387,7 @@ export function PosApp() {
+@@ -1143,7 +1384,7 @@ export function PosApp() {
      taxSummary.set(tax.code, existing)
    }
    const filteredOrders = orders.filter((order) => !tableSearch.trim() || `${order.orderNumber} ${order.employeeName} ${order.paymentMethod ?? ''} ${order.status}`.toLowerCase().includes(tableSearch.toLowerCase()))
@@ -3909,7 +3942,27 @@ index 5021b63f888917fafbf40e07fa40de3f5ccfc36e..c028fd2ae6aa57ebf0e3456af0b38263
    const filteredEmployees = employees.filter((person) => !tableSearch.trim() || `${person.displayName} ${person.role}`.toLowerCase().includes(tableSearch.toLowerCase()))
    const stockRows = products.map((product) => ({ product, item: inventory.find((entry) => entry.productId === product.id) })).sort((a, b) => (a.item?.quantityOnHand ?? 0) - (b.item?.quantityOnHand ?? 0))
    const negativeStockCount = inventory.filter((item) => item.quantityOnHand < 0).length
-@@ -1169,6 +1413,8 @@ export function PosApp() {
+@@ -1151,16 +1392,16 @@ export function PosApp() {
+ 
+   const renderCheckout = () => (
+     <>
+-      <SectionHeading title="Checkout" subtitle="Tap a product to add it. The ready cart goes to cash recording or a provider request in at most three taps." actions={isManager ? <button className="btn" onClick={() => openProductEditor()}><Plus size={14} />New product</button> : undefined} />
++      <SectionHeading title="Checkout" subtitle="Tap or scan a product, then record the cash received. Cash is the only enabled tender." actions={isManager ? <button className="btn" onClick={() => openProductEditor()}><Plus size={14} />New product</button> : undefined} />
+       <div className="status-strip">
+         <span className={`status-pill ${online ? 'good' : 'warn'}`}><span className="status-dot" />{online ? <Wifi size={12} /> : <WifiOff size={12} />}{online ? 'Online' : 'Offline'}</span>
+         <span>{APP_DEMO_MODE ? 'Demo data · local only' : cloudSignedIn ? 'Cloud sync enabled' : 'Local mode · sign in to sync'}</span>
+         <span className="status-separator" />
+         <span className={`status-pill ${reviewCount ? 'bad' : pendingCount ? 'warn' : 'good'}`}><Cloud size={12} />{APP_DEMO_MODE ? 'Cloud not connected' : reviewCount ? `${reviewCount} stock/sync review(s)` : pendingCount ? `${pendingCount} queued` : 'Synced'}</span>
+-        {allPendingDigital > 0 && <span className="status-pill warn"><CreditCard size={12} />{allPendingDigital} digital pending</span>}
++        {allPendingDigital > 0 && <span className="status-pill warn"><CreditCard size={12} />{allPendingDigital} legacy non-cash pending</span>}
+         {activeShift ? <span className="status-pill blue"><Clock3 size={12} />Shift open · {activeShift.employeeName}</span> : <button className="link-button" onClick={() => { setView('shifts'); openShiftEditor('open') }}>Open shift</button>}
+       </div>
+-      {APP_DEMO_MODE && <div className="sync-callout" style={{ marginBottom: 12 }}><div><strong>Demo environment — local only</strong><p>Cash transactions are saved in Dexie on this device. Card and MoMo approvals below are clearly simulated; no money moves and no real provider webhook is claimed.</p></div><StatusBadge status="demo_simulated" label="Demo" /></div>}
++      {APP_DEMO_MODE && <div className="sync-callout" style={{ marginBottom: 12 }}><div><strong>Demo environment — local only</strong><p>Cash sales are saved in Dexie on this device. Checkout is cash-only; no payment gateway is configured.</p></div><StatusBadge status="demo_simulated" label="Demo" /></div>}
+       {!activeShift && <div className="attention-note" style={{ marginBottom: 12 }}><AlertTriangle size={15} />Open a shift on this device before recording a sale. Cash totals and end-of-shift reconciliation are linked to the open shift.</div>}
+       <div className="checkout-layout">
+         <section className="panel catalog-panel">
+@@ -1169,6 +1410,8 @@ export function PosApp() {
                <div className="search-wrap"><Search className="search-icon" size={14} /><input aria-label="Search products" placeholder="Search product or SKU…" value={search} onChange={(event) => setSearch(event.target.value)} /></div>
                <div className="catalog-tools-right"><button className="btn small" onClick={() => setView('inventory')}><Boxes size={13} /><span className="hide-small">Stock</span></button></div>
              </div>
@@ -3918,7 +3971,25 @@ index 5021b63f888917fafbf40e07fa40de3f5ccfc36e..c028fd2ae6aa57ebf0e3456af0b38263
              <div className="category-row">{categories.map((category) => <button className={`chip ${activeCategory === category ? 'selected' : ''}`} key={category} onClick={() => setActiveCategory(category)}>{category}</button>)}<span className="catalog-count">{filteredProducts.length} items</span></div>
            </div>
            {filteredProducts.length ? <div className="product-grid">{filteredProducts.map((product) => {
-@@ -1219,11 +1465,11 @@ export function PosApp() {
+@@ -1195,7 +1438,7 @@ export function PosApp() {
+           <div className="cart-bottom">
+             <div className="cart-totals"><div className="total-row"><span>Net subtotal</span><strong>{displayMoney(cartTotals.subtotalMinor)}</strong></div><div className="total-row tax"><span>Tax on items</span><strong>{displayMoney(cartTotals.taxMinor)}</strong></div><div className="total-row"><span>Items</span><strong>{cartItemCount}</strong></div><div className="total-grand"><span>Total due</span><strong>{displayMoney(cartTotals.totalMinor)}</strong></div></div>
+             <button className="checkout-button" disabled={!cartLines.length || !activeShift} onClick={openPayment}>Checkout <span style={{ float: 'right' }}>{cartLines.length ? `· ${money(cartTotals.totalMinor)}` : ''}</span></button>
+-            <div className="cart-footnote">{APP_DEMO_MODE ? 'Demo · local only · no card/MoMo charges' : 'Cash finalizes offline · digital tenders require provider confirmation'}</div>
++            <div className="cart-footnote">{APP_DEMO_MODE ? 'Demo · local only · cash only' : 'Cash only · sales can be recorded offline'}</div>
+           </div>
+         </aside>
+       </div>
+@@ -1208,7 +1451,7 @@ export function PosApp() {
+       <div className="card">
+         <div className="table-toolbar"><div><strong>{orders.length} transactions</strong><div className="subtle" style={{ marginTop: 3, fontSize: 10 }}>Digital payments stay pending until the provider confirms them.</div></div><div className="table-search"><input placeholder="Search receipt, cashier or tender…" value={tableSearch} onChange={(event) => setTableSearch(event.target.value)} /></div></div>
+         <div className="table-wrap"><table className="data-table"><thead><tr><th>Receipt</th><th>Date</th><th>Cashier</th><th>Tender</th><th>Payment status</th><th>Tax</th><th>Total</th><th /></tr></thead><tbody>
+-          {filteredOrders.map((order) => <tr key={order.id}><td><strong>{order.orderNumber}</strong><div className="subtle" style={{ marginTop: 3 }}>{order.items.length} line(s)</div></td><td>{stamp(order.createdAt)}</td><td>{order.employeeName}</td><td>{order.paymentMethod ? titleCase(order.paymentMethod) : '—'}{order.paymentMethod === 'momo' && order.providerReference && <div className="subtle" style={{ marginTop: 3 }}>{order.providerReference}</div>}</td><td><StatusBadge status={order.paymentStatus ?? order.status} label={order.paymentStatus === 'demo_simulated' ? 'Simulated · demo' : titleCase(order.paymentStatus ?? order.status)} /></td><td>{money(order.taxMinor)}</td><td><strong>{money(order.totalMinor - order.refundedMinor)}</strong></td><td><div className="table-row-actions"><button className="btn small" onClick={() => openReceipt(order)}><ReceiptText size={12} />View</button>{!APP_DEMO_MODE && order.status === 'pending_payment' && order.paymentMethod && order.paymentMethod !== 'cash' && <button className="btn small soft" onClick={() => void inspectPendingOrderPayment(order)}><RefreshCw size={12} />{order.providerReference ? 'Check payment' : 'Continue'}</button>}{employee && (employee.refundLimitMinor === null || (employee.refundLimitMinor ?? 0) > 0) && order.status !== 'refunded' && order.status !== 'pending_payment' && <button className="btn small soft" onClick={() => void beginRefund(order)}><RotateCcw size={12} />Refund</button>}</div></td></tr>)}
++          {filteredOrders.map((order) => <tr key={order.id}><td><strong>{order.orderNumber}</strong><div className="subtle" style={{ marginTop: 3 }}>{order.items.length} line(s)</div></td><td>{stamp(order.createdAt)}</td><td>{order.employeeName}</td><td>{order.paymentMethod ? titleCase(order.paymentMethod) : '—'}{order.paymentMethod === 'momo' && order.providerReference && <div className="subtle" style={{ marginTop: 3 }}>{order.providerReference}</div>}</td><td><StatusBadge status={order.paymentStatus ?? order.status} label={order.paymentStatus === 'demo_simulated' ? 'Simulated · demo' : titleCase(order.paymentStatus ?? order.status)} /></td><td>{money(order.taxMinor)}</td><td><strong>{money(order.totalMinor - order.refundedMinor)}</strong></td><td><div className="table-row-actions"><button className="btn small" onClick={() => openReceipt(order)}><ReceiptText size={12} />View</button>{!CASH_ONLY_CHECKOUT && !APP_DEMO_MODE && order.status === 'pending_payment' && order.paymentMethod && order.paymentMethod !== 'cash' && <button className="btn small soft" onClick={() => void inspectPendingOrderPayment(order)}><RefreshCw size={12} />{order.providerReference ? 'Check payment' : 'Continue'}</button>}{employee && (employee.refundLimitMinor === null || (employee.refundLimitMinor ?? 0) > 0) && order.status !== 'refunded' && order.status !== 'pending_payment' && <button className="btn small soft" onClick={() => void beginRefund(order)}><RotateCcw size={12} />Refund</button>}</div></td></tr>)}
+           {!filteredOrders.length && <tr><td colSpan={8}><div className="empty-state"><span className="empty-state-icon"><History size={20} /></span><h3>No matching transactions</h3><p>Completed cash sales and provider-confirmed digital sales will appear here.</p></div></td></tr>}
+         </tbody></table></div>
+         {APP_DEMO_MODE && <div className="info-note" style={{ marginTop: 12 }}>Demo sample transactions are illustrative. They are not provider-verified payments or certified tax receipts.</div>}
+@@ -1219,11 +1462,11 @@ export function PosApp() {
  
    const renderProducts = () => (
      <>
@@ -3935,7 +4006,7 @@ index 5021b63f888917fafbf40e07fa40de3f5ccfc36e..c028fd2ae6aa57ebf0e3456af0b38263
          </tbody></table></div>
        </div>
      </>
-@@ -1235,7 +1481,7 @@ export function PosApp() {
+@@ -1235,7 +1478,7 @@ export function PosApp() {
        <div className="metric-grid"><MetricCard label="Tracked products" value={String(products.length)} icon={Boxes} note="Active catalogue" /><MetricCard label="Low stock" value={String(stockRows.filter((entry) => (entry.item?.quantityOnHand ?? 0) <= 5).length)} icon={AlertTriangle} note="5 units or fewer" tone="amber" /><MetricCard label="Pending stock changes" value={String(pendingCount)} icon={Cloud} note={APP_DEMO_MODE ? 'Demo · local only' : 'Waiting for sync'} tone="blue" /><MetricCard label="Conflicts to review" value={String(reviewCount)} icon={Activity} note={`${conflictCount} sync conflict(s) · ${negativeStockCount} negative stock balance(s)`} tone={reviewCount ? 'amber' : 'green'} /></div>
        <div className="card"><div className="table-toolbar"><div><strong>Stock on hand</strong><div className="subtle" style={{ marginTop: 3, fontSize: 10 }}>Count adjustments send deltas with a base row version; stale counts require review.</div></div><div className="table-search"><input placeholder="Search stock…" value={tableSearch} onChange={(event) => setTableSearch(event.target.value)} /></div></div>
          <div className="table-wrap"><table className="data-table"><thead><tr><th>Product</th><th>SKU</th><th>Category</th><th>Available</th><th>Stock state</th><th>Last movement</th><th /></tr></thead><tbody>
@@ -3944,7 +4015,16 @@ index 5021b63f888917fafbf40e07fa40de3f5ccfc36e..c028fd2ae6aa57ebf0e3456af0b38263
          </tbody></table></div>
        </div>
        {!isManager && <div className="info-note" style={{ marginTop: 12 }}>Cashier access is read-only for manual stock counts. Ask a manager to receive stock or approve a physical count.</div>}
-@@ -1274,8 +1520,12 @@ export function PosApp() {
+@@ -1255,7 +1498,7 @@ export function PosApp() {
+             {weeklyBars.map((bar, index) => { const x = 65 + index * 86; const h = Math.max(4, 142 * bar.amount / maxBar); return <g key={`${bar.label}-${index}`}><rect x={x} y={170 - h} width="38" height={h} rx="8" fill={index === 6 ? '#176546' : '#9dc9a7'} /><text x={x + 19} y="194" textAnchor="middle" fill="#718077" fontSize="10">{bar.label}</text></g> })}
+           </svg>
+         </div>
+-        <div className="card span-5"><div className="card-head"><div><h2>Tender mix</h2><p>Net sales by original payment method</p></div><CreditCard size={17} color="#6c8c76" /></div><div className="report-bar-list">{paymentTotals.map((entry) => { const max = Math.max(1, ...paymentTotals.map((item) => item.amount)); const Icon = entry.method === 'cash' ? Banknote : entry.method === 'momo' ? Smartphone : CreditCard; return <div className="report-bar-row" key={entry.method}><span className="report-bar-label"><Icon size={12} style={{ marginRight: 5, verticalAlign: 'middle' }} />{titleCase(entry.method)}</span><span className="report-bar-track"><span className="report-bar-fill" style={{ width: `${Math.round(entry.amount / max * 100)}%` }} /></span><span className="report-bar-value">{money(entry.amount)}</span></div>})}</div><div className="info-note" style={{ marginTop: 17 }}>Demo-simulated card/MoMo records are labelled as demo. They do not represent PSP settlement.</div></div>
++        <div className="card span-5"><div className="card-head"><div><h2>Tender mix</h2><p>Net sales by original payment method</p></div><CreditCard size={17} color="#6c8c76" /></div><div className="report-bar-list">{paymentTotals.map((entry) => { const max = Math.max(1, ...paymentTotals.map((item) => item.amount)); const Icon = entry.method === 'cash' ? Banknote : entry.method === 'momo' ? Smartphone : CreditCard; return <div className="report-bar-row" key={entry.method}><span className="report-bar-label"><Icon size={12} style={{ marginRight: 5, verticalAlign: 'middle' }} />{titleCase(entry.method)}</span><span className="report-bar-track"><span className="report-bar-fill" style={{ width: `${Math.round(entry.amount / max * 100)}%` }} /></span><span className="report-bar-value">{money(entry.amount)}</span></div>})}</div><div className="info-note" style={{ marginTop: 17 }}>Demo history may contain simulated card/MoMo rows; current checkout is cash-only and no gateway settlement occurred.</div></div>
+         <div className="card span-6"><div className="card-head"><div><h2>Tax component summary</h2><p>Breakdown from transaction-time tax snapshots</p></div><ShieldCheck size={17} color="#6c8c76" /></div>{taxSummary.size ? <div className="report-bar-list">{Array.from(taxSummary.entries()).map(([code, entry]) => { const max = Math.max(1, ...Array.from(taxSummary.values()).map((item) => item.amount)); return <div className="report-bar-row" key={code}><span className="report-bar-label">{entry.name} · {entry.rate}%</span><span className="report-bar-track"><span className="report-bar-fill" style={{ width: `${Math.round(entry.amount / max * 100)}%` }} /></span><span className="report-bar-value">{money(entry.amount)}</span></div>})}</div> : <div className="empty-state"><p>No tax-bearing sales recorded today.</p></div>}<div className="info-note" style={{ marginTop: 15 }}>Inclusive/exclusive calculations are local application logic. Confirm applicable GRA rules and E-VAT/CIS certification before live use.</div></div>
+         <div className="card span-6"><div className="card-head"><div><h2>Top items</h2><p>Across locally available completed transactions</p></div><ShoppingBasket size={17} color="#6c8c76" /></div>{categorySales.length ? <div className="report-bar-list">{categorySales.map(({ product, qty }) => { const max = Math.max(1, ...categorySales.map((entry) => entry.qty)); return <div className="report-bar-row" key={product.id}><span className="report-bar-label">{product.name}</span><span className="report-bar-track"><span className="report-bar-fill" style={{ width: `${Math.round(qty / max * 100)}%` }} /></span><span className="report-bar-value">{qty} sold</span></div>})}</div> : <div className="empty-state"><p>Complete a sale to see top items.</p></div>}</div>
+       </div>
+@@ -1274,8 +1517,12 @@ export function PosApp() {
  
    const renderTeam = () => (
      <>
@@ -3959,7 +4039,7 @@ index 5021b63f888917fafbf40e07fa40de3f5ccfc36e..c028fd2ae6aa57ebf0e3456af0b38263
      </>
    )
  
-@@ -1291,12 +1541,13 @@ export function PosApp() {
+@@ -1291,12 +1538,13 @@ export function PosApp() {
      <>
        <SectionHeading title="Settings" subtitle="Device, display currency, cloud, receipt and compliance information." />
        <div className="content-grid">
@@ -3968,13 +4048,14 @@ index 5021b63f888917fafbf40e07fa40de3f5ccfc36e..c028fd2ae6aa57ebf0e3456af0b38263
          <div className="card span-6"><div className="card-head"><div><h2>Connectivity & sync</h2><p>Device status and local outbox</p></div>{online ? <Wifi size={18} color="#34724f" /> : <WifiOff size={18} color="#a26210" />}</div><div className="report-bar-list"><div className="report-bar-row" style={{ gridTemplateColumns: '1fr auto' }}><span className="report-bar-label">Network</span><StatusBadge status={online ? 'synced' : 'pending'} label={online ? 'Online' : 'Offline'} /></div><div className="report-bar-row" style={{ gridTemplateColumns: '1fr auto' }}><span className="report-bar-label">Cloud</span><StatusBadge status={APP_DEMO_MODE ? 'pending' : cloudSignedIn ? 'synced' : 'conflict'} label={APP_DEMO_MODE ? 'Demo · local only' : cloudSignedIn ? 'Signed in' : 'Not signed in'} /></div><div className="report-bar-row" style={{ gridTemplateColumns: '1fr auto' }}><span className="report-bar-label">Queued changes</span><strong>{pendingCount}</strong></div><div className="report-bar-row" style={{ gridTemplateColumns: '1fr auto' }}><span className="report-bar-label">Conflicts</span><strong>{conflictCount}</strong></div></div><div className="heading-actions" style={{ marginTop: 15 }}><button className="btn primary" disabled={syncBusy || !online} onClick={() => void syncData()}><RefreshCw size={14} className={syncBusy ? 'spin' : ''} />{syncBusy ? 'Syncing…' : 'Sync now'}</button>{!APP_DEMO_MODE && <button className="btn" onClick={() => void signOut()}><LogOut size={14} />Sign out</button>}</div></div>
          {!APP_DEMO_MODE && <div className="card span-6"><div className="card-head"><div><h2>Offline device access</h2><p>PIN-gated unlock for this cached staff profile</p></div><ShieldCheck size={18} color="#6c8c76" /></div><div className="report-bar-row" style={{ gridTemplateColumns: '1fr auto', marginBottom: 12 }}><span className="report-bar-label">Local PIN status</span><StatusBadge status={offlinePinAvailable ? 'synced' : 'pending'} label={offlinePinAvailable ? 'Registered on this device' : 'Not registered'} /></div>{cloudSignedIn && online ? <form className="form-grid" onSubmit={saveLocalOfflinePin}><div className="field"><label htmlFor="offline-pin-setup">New PIN · 6–8 digits</label><input id="offline-pin-setup" type="password" inputMode="numeric" autoComplete="new-password" pattern="[0-9]{6,8}" maxLength={8} value={offlinePinSetup} onChange={(event) => setOfflinePinSetup(event.target.value.replace(/\D/g, '').slice(0, 8))} required /></div><div className="field"><label htmlFor="offline-pin-confirm">Confirm PIN</label><input id="offline-pin-confirm" type="password" inputMode="numeric" autoComplete="new-password" pattern="[0-9]{6,8}" maxLength={8} value={offlinePinConfirm} onChange={(event) => setOfflinePinConfirm(event.target.value.replace(/\D/g, '').slice(0, 8))} required /></div><div className="field full"><button className="btn primary" disabled={offlinePinSaving || offlinePinSetup.length < 6 || offlinePinConfirm.length < 6}>{offlinePinSaving ? <Loader2 size={14} className="spin" /> : <ShieldCheck size={14} />}{offlinePinSaving ? 'Saving…' : offlinePinAvailable ? 'Change offline PIN' : 'Set offline PIN'}</button></div></form> : <div className="info-note">Sign in while online to set or change this PIN. Only a salted PBKDF2 hash is stored. Signing out clears the local PIN and cached profile. This is a device unlock—not cloud authentication or encryption of IndexedDB records.</div>}<div className="field-hint" style={{ marginTop: 9 }}>Each staff member may enroll their own PIN after signing in. Offline access is limited to the last cached profile on this device; keep the tablet’s operating-system screen lock enabled.</div></div>}
          <div className="card span-6"><div className="card-head"><div><h2>Receipts & printers</h2><p>PDF, native share/mail, ESC/POS Bluetooth or USB</p></div><Printer size={18} color="#6c8c76" /></div><div className="info-note">Bluetooth and USB print use browser device APIs and require HTTPS, compatible Chromium, a user tap to connect, and a tested printer model. iOS/Safari support is limited. Native browser print/PDF is the fallback.</div><div className="heading-actions" style={{ marginTop: 13 }}><button className="btn" onClick={() => showToast('Open any receipt to use PDF print, native share/mail, Bluetooth or USB ESC/POS.', 'plain')}><Printer size={14} />Printer help</button><button className="btn" onClick={() => void installApp()}>{installed ? <Check size={14} /> : <ArrowDownToLine size={14} />}{installed ? 'Installed' : 'Install PWA'}</button></div><div className="subtle" style={{ marginTop: 12, fontSize: 9 }}>Managed email requires a server-side Resend key and verified sender. Demo falls back to native share/PDF; no email delivery is claimed.</div></div>
-         <div className="card span-6"><div className="card-head"><div><h2>Payment & compliance</h2><p>Ghana is a provisional market configuration</p></div><ShieldCheck size={18} color="#6c8c76" /></div><div className="report-bar-list"><div className="report-bar-row" style={{ gridTemplateColumns: '1fr auto' }}><span className="report-bar-label">Paystack server key</span><StatusBadge status={cloudPaymentEnabled ? 'synced' : 'pending'} label={cloudPaymentEnabled ? 'Configured' : 'Not configured'} /></div><div className="report-bar-row" style={{ gridTemplateColumns: '1fr auto' }}><span className="report-bar-label">Tax receipt profile</span><StatusBadge status="pending" label="Demo / unverified" /></div><div className="report-bar-row" style={{ gridTemplateColumns: '1fr auto' }}><span className="report-bar-label">E-VAT/CIS certification</span><StatusBadge status="pending" label="Not verified" /></div></div><div className="attention-note" style={{ marginTop: 13 }}><AlertTriangle size={14} />Never mark card or mobile money paid from a redirect, screenshot or timeout. Only signed provider webhook/server verification finalizes a live digital tender.</div></div>
+-        <div className="card span-6"><div className="card-head"><div><h2>Payment & compliance</h2><p>Ghana is a provisional market configuration</p></div><ShieldCheck size={18} color="#6c8c76" /></div><div className="report-bar-list"><div className="report-bar-row" style={{ gridTemplateColumns: '1fr auto' }}><span className="report-bar-label">Paystack server key</span><StatusBadge status={cloudPaymentEnabled ? 'synced' : 'pending'} label={cloudPaymentEnabled ? 'Configured' : 'Not configured'} /></div><div className="report-bar-row" style={{ gridTemplateColumns: '1fr auto' }}><span className="report-bar-label">Tax receipt profile</span><StatusBadge status="pending" label="Demo / unverified" /></div><div className="report-bar-row" style={{ gridTemplateColumns: '1fr auto' }}><span className="report-bar-label">E-VAT/CIS certification</span><StatusBadge status="pending" label="Not verified" /></div></div><div className="attention-note" style={{ marginTop: 13 }}><AlertTriangle size={14} />Never mark card or mobile money paid from a redirect, screenshot or timeout. Only signed provider webhook/server verification finalizes a live digital tender.</div></div>
 -        {APP_DEMO_MODE && <div className="card span-12"><div className="card-head"><div><h2>Demo data</h2><p>Reset the local sample catalogue and transactions for this browser.</p></div><Sparkles size={18} color="#6c8c76" /></div><button className="btn danger" onClick={async () => { if (!window.confirm('Clear local demo data and reseed the sample store on this browser?')) return; await clearLocalDemoData(); localStorage.removeItem('pos-selected-employee'); await ensureDemoData(); await refreshLocalState(); setEmployee(null); setCart({}); showToast('Demo workspace reset.', 'success') }}><Trash2 size={14} />Reset demo workspace</button></div>}
++        <div className="card span-6"><div className="card-head"><div><h2>Payment & compliance</h2><p>Cash-only checkout is enabled</p></div><ShieldCheck size={18} color="#6c8c76" /></div><div className="report-bar-list"><div className="report-bar-row" style={{ gridTemplateColumns: '1fr auto' }}><span className="report-bar-label">Accepted tender</span><StatusBadge status="synced" label="Cash only" /></div><div className="report-bar-row" style={{ gridTemplateColumns: '1fr auto' }}><span className="report-bar-label">Payment gateway</span><StatusBadge status="pending" label="Not configured · not required" /></div><div className="report-bar-row" style={{ gridTemplateColumns: '1fr auto' }}><span className="report-bar-label">Tax receipt profile</span><StatusBadge status="pending" label="Demo / unverified" /></div><div className="report-bar-row" style={{ gridTemplateColumns: '1fr auto' }}><span className="report-bar-label">E-VAT/CIS certification</span><StatusBadge status="pending" label="Not verified" /></div></div><div className="info-note" style={{ marginTop: 13 }}>Card and mobile-money checkout is hidden. No gateway keys, webhooks or live payment processing are required for the cash-only setup.</div></div>
 +        {APP_DEMO_MODE && <div className="card span-12"><div className="card-head"><div><h2>Demo data</h2><p>Reset the local sample catalogue and transactions for this browser.</p></div><Sparkles size={18} color="#6c8c76" /></div><button className="btn danger" onClick={async () => { if (!window.confirm('Clear local demo data and reseed the sample store on this browser?')) return; await clearLocalDemoData(); localStorage.removeItem('pos-selected-employee'); await ensureDemoData(); setShopName('Accra Retail Demo'); setShopNameDraft('Accra Retail Demo'); await setMeta('shop-name', 'Accra Retail Demo'); await refreshLocalState(); setEmployee(null); setCart({}); showToast('Demo workspace reset.', 'success') }}><Trash2 size={14} />Reset demo workspace</button></div>}
        </div>
      </>
    )
-@@ -1325,7 +1576,7 @@ export function PosApp() {
+@@ -1325,7 +1573,7 @@ export function PosApp() {
            <div className="brand-lockup"><span className="brand-mark">K</span><span><span className="brand-name">Kasa POS</span><span className="brand-caption">Independent retail</span></span></div>
            <div className="nav-label">Workspace</div>
            <nav className="nav-list" aria-label="Main navigation">{allowedNav.map((item) => { const Icon = item.icon; return <button key={item.key} className={`nav-item ${view === item.key ? 'active' : ''}`} onClick={() => { setView(item.key); setTableSearch('') }}><span className="nav-icon"><Icon size={16} /></span>{item.label}{item.key === 'transactions' && allPendingDigital > 0 && <span className="nav-count">{allPendingDigital}</span>}</button> })}</nav>
@@ -3983,6 +4064,28 @@ index 5021b63f888917fafbf40e07fa40de3f5ccfc36e..c028fd2ae6aa57ebf0e3456af0b38263
          </aside>
          <main className="main-area">
            <header className="topbar"><div className="topbar-left"><div className="mobile-brand"><span className="brand-mark">K</span><strong>Kasa POS</strong></div><div><div className="topbar-title">{pageTitle[view]}</div><div className="topbar-subtitle">{dateText} · {employee.displayName} · {roleLabel(employee.role)}</div></div></div><div className="topbar-actions"><select className="top-select" aria-label="Display reference currency" value={displayCurrency} onChange={async (event) => { const next = event.target.value as typeof displayCurrency; setDisplayCurrency(next); await setMeta('display-currency', next) }}><option value="GHS">GHS base</option><option value="USD">USD ref</option><option value="EUR">EUR ref</option><option value="KES">KES ref</option></select>{installPrompt && <button className="btn small soft" onClick={() => void installApp()}><ArrowDownToLine size={13} /><span className="hide-small">Install</span></button>}<button className="icon-button" title="Sync now" onClick={() => void syncData()} disabled={syncBusy || !online}><RefreshCw size={15} className={syncBusy ? 'spin' : ''} /></button><button className="icon-button" title="Switch employee" onClick={() => void signOut()}><span className="avatar small">{initials(employee.displayName)}</span></button></div></header>
+@@ -1339,14 +1587,17 @@ export function PosApp() {
+         </main>
+       </div>
+ 
+-      {modal === 'payment' && <Modal title={pendingPayment ? 'Payment pending' : 'Complete sale'} description={pendingPayment ? 'This order remains unpaid until verified provider confirmation.' : 'Cash, card and mobile money. Digital tenders are never finalized from a redirect or screenshot.'} onClose={() => { if (pendingPayment) { setModal(null); setPendingPayment(null) } else setModal(null) }} footer={pendingPayment ? <><button className="btn" onClick={() => { setModal(null); setPendingPayment(null) }}>Close · keep pending</button>{pendingPayment.reference && !APP_DEMO_MODE && <button className="btn" disabled={!online || !cloudSignedIn || paymentChecking} onClick={() => void verifyPendingPayment(pendingPayment, true)}>{paymentChecking ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />}Check provider status</button>}{pendingPayment.retryable && !APP_DEMO_MODE && <button className="btn primary" disabled={!online || !cloudSignedIn || paymentChecking || !paymentConsent || !customerEmail.trim() || (pendingPayment.method === 'momo' && !customerPhone.trim())} onClick={() => void retryPendingPayment(pendingPayment)}>{paymentChecking ? <Loader2 size={14} className="spin" /> : <Smartphone size={14} />}{pendingPayment.reference ? 'Retry payment' : 'Request payment'}</button>}</> : <><button className="btn" onClick={() => setModal(null)}>Back to cart</button><button className="btn primary" disabled={paymentMethod === 'cash' ? parseMoneyInput(cashReceived) < cartTotals.totalMinor : !cartLines.length || (!APP_DEMO_MODE && (!paymentConsent || (online && (!customerEmail.trim() || (paymentMethod === 'momo' && !customerPhone.trim())))))} onClick={() => paymentMethod === 'cash' ? void finishCashSale() : void startDigitalPayment()}>{paymentMethod === 'cash' ? <Banknote size={14} /> : paymentMethod === 'card' ? <CreditCard size={14} /> : <Smartphone size={14} />}{paymentMethod === 'cash' ? 'Record cash sale' : APP_DEMO_MODE ? `Simulate ${paymentMethod === 'momo' ? 'MoMo' : 'card'} approval · demo` : `Request ${paymentMethod === 'momo' ? 'MoMo' : 'card'} payment`}</button></>}>
+-          {pendingPayment ? <div className="success-panel" style={{ paddingTop: 4 }}><div className="success-check" style={{ background: '#fff4dc', color: '#a26210' }}><Loader2 size={23} className={paymentChecking ? 'spin' : ''} /></div><h2>Awaiting confirmation</h2><p>{pendingPayment.message}</p><div className="receipt-paper"><div className="receipt-title">{pendingPayment.method === 'momo' ? 'Mobile-money request' : 'Card authorization'}</div><div className="receipt-line"><span>Order</span><strong>{orders.find((order) => order.id === pendingPayment.orderId)?.orderNumber ?? pendingPayment.orderId.slice(0, 8)}</strong></div><div className="receipt-line"><span>Reference</span><strong>{pendingPayment.reference ?? 'Not assigned yet'}</strong></div><div className="receipt-line"><span>Network</span><strong>{pendingPayment.network?.toUpperCase() ?? (pendingPayment.method === 'card' ? 'Card' : '—')}</strong></div></div><div className="attention-note" style={{ textAlign: 'left' }}><AlertTriangle size={14} />Do not hand over goods as paid until the POS receives verified server confirmation. A timeout is not proof of success or failure.</div>{pendingPayment.retryable && !APP_DEMO_MODE && <><div className="info-note" style={{ textAlign: 'left' }}>After a confirmed failed/abandoned attempt—or when no request was sent—you can create a new authorization for this same sale. Any saved provider reference is checked first to avoid a duplicate charge.</div><div className="form-grid"><div className="field"><label>Customer email</label><input type="email" value={customerEmail} onChange={(event) => setCustomerEmail(event.target.value)} placeholder="customer@example.com" /></div>{pendingPayment.method === 'momo' && <><div className="field"><label>Mobile-money network</label><select value={momoNetwork} onChange={(event) => setMomoNetwork(event.target.value)}><option value="mtn">MTN Mobile Money</option><option value="atl">ATMoney / Airtel Money</option><option value="vod">Telecel Cash</option></select></div><div className="field"><label>Customer phone</label><input inputMode="tel" value={customerPhone} onChange={(event) => setCustomerPhone(event.target.value)} placeholder="+233 24 123 4567" /></div></>}</div></>}{APP_DEMO_MODE && <div className="info-note">Demo mode sends no request. A separate “simulate approval” action is available only from the checkout method selector.</div>}</div> : <>
++      {modal === 'payment' && <Modal title={pendingPayment ? 'Payment pending' : 'Complete sale'} description={pendingPayment ? 'This order remains unpaid until its payment status is reconciled.' : CASH_ONLY_CHECKOUT ? 'Cash only. Enter the amount received; change is calculated automatically.' : 'Cash, card and mobile money. Digital tenders are never finalized from a redirect or screenshot.'} onClose={() => { if (pendingPayment) { setModal(null); setPendingPayment(null) } else setModal(null) }} footer={pendingPayment ? <><button className="btn" onClick={() => { setModal(null); setPendingPayment(null) }}>Close · keep pending</button>{!CASH_ONLY_CHECKOUT && pendingPayment.reference && !APP_DEMO_MODE && <button className="btn" disabled={!online || !cloudSignedIn || paymentChecking} onClick={() => void verifyPendingPayment(pendingPayment, true)}>{paymentChecking ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />}Check provider status</button>}{!CASH_ONLY_CHECKOUT && pendingPayment.retryable && !APP_DEMO_MODE && <button className="btn primary" disabled={!online || !cloudSignedIn || paymentChecking || !paymentConsent || !customerEmail.trim() || (pendingPayment.method === 'momo' && !customerPhone.trim())} onClick={() => void retryPendingPayment(pendingPayment)}>{paymentChecking ? <Loader2 size={14} className="spin" /> : <Smartphone size={14} />}{pendingPayment.reference ? 'Retry payment' : 'Request payment'}</button>}</> : <><button className="btn" onClick={() => setModal(null)}>Back to cart</button><button className="btn primary" disabled={!cartLines.length || !activeShift || paymentMethod !== 'cash' || parseMoneyInput(cashReceived) < cartTotals.totalMinor} onClick={() => paymentMethod === 'cash' ? void finishCashSale() : void startDigitalPayment()}><Banknote size={14} />Record cash sale</button></>}>
++          {pendingPayment ? <div className="success-panel" style={{ paddingTop: 4 }}><div className="success-check" style={{ background: '#fff4dc', color: '#a26210' }}><Loader2 size={23} className={paymentChecking ? 'spin' : ''} /></div><h2>Awaiting confirmation</h2><p>{pendingPayment.message}</p><div className="receipt-paper"><div className="receipt-title">{pendingPayment.method === 'momo' ? 'Mobile-money request' : 'Card authorization'}</div><div className="receipt-line"><span>Order</span><strong>{orders.find((order) => order.id === pendingPayment.orderId)?.orderNumber ?? pendingPayment.orderId.slice(0, 8)}</strong></div><div className="receipt-line"><span>Reference</span><strong>{pendingPayment.reference ?? 'Not assigned yet'}</strong></div><div className="receipt-line"><span>Network</span><strong>{pendingPayment.network?.toUpperCase() ?? (pendingPayment.method === 'card' ? 'Card' : '—')}</strong></div></div><div className="attention-note" style={{ textAlign: 'left' }}><AlertTriangle size={14} />Do not hand over goods as paid until the POS receives verified server confirmation. A timeout is not proof of success or failure.</div>{!CASH_ONLY_CHECKOUT && pendingPayment.retryable && !APP_DEMO_MODE && <><div className="info-note" style={{ textAlign: 'left' }}>After a confirmed failed/abandoned attempt—or when no request was sent—you can create a new authorization for this same sale. Any saved provider reference is checked first to avoid a duplicate charge.</div><div className="form-grid"><div className="field"><label>Customer email</label><input type="email" value={customerEmail} onChange={(event) => setCustomerEmail(event.target.value)} placeholder="customer@example.com" /></div>{pendingPayment.method === 'momo' && <><div className="field"><label>Mobile-money network</label><select value={momoNetwork} onChange={(event) => setMomoNetwork(event.target.value)}><option value="mtn">MTN Mobile Money</option><option value="atl">ATMoney / Airtel Money</option><option value="vod">Telecel Cash</option></select></div><div className="field"><label>Customer phone</label><input inputMode="tel" value={customerPhone} onChange={(event) => setCustomerPhone(event.target.value)} placeholder="+233 24 123 4567" /></div></>}</div></>}{APP_DEMO_MODE && <div className="info-note">Demo mode sends no request. A separate “simulate approval” action is available only from the checkout method selector.</div>}</div> : <>
+             <div className="form-grid"><div className="field full"><label>Sale total · GHS</label><input value={money(cartTotals.totalMinor)} readOnly /></div></div>
+             <div className="payment-methods" style={{ marginTop: 14 }}>
+               <button className={`payment-choice ${paymentMethod === 'cash' ? 'selected' : ''}`} onClick={() => setPaymentMethod('cash')}><span className="payment-choice-icon"><Banknote size={16} /></span><strong>Cash</strong><span>Finalize offline</span></button>
+-              <button className={`payment-choice ${paymentMethod === 'momo' ? 'selected' : ''}`} onClick={() => setPaymentMethod('momo')}><span className="payment-choice-icon"><Smartphone size={16} /></span><strong>Mobile money</strong><span>{APP_DEMO_MODE ? 'Demo only' : 'Provider confirmation'}</span></button>
+-              <button className={`payment-choice ${paymentMethod === 'card' ? 'selected' : ''}`} onClick={() => setPaymentMethod('card')}><span className="payment-choice-icon"><CreditCard size={16} /></span><strong>Card</strong><span>{APP_DEMO_MODE ? 'Demo only' : 'Provider confirmation'}</span></button>
++              {!CASH_ONLY_CHECKOUT && <>
++                <button className={`payment-choice ${paymentMethod === 'momo' ? 'selected' : ''}`} onClick={() => setPaymentMethod('momo')}><span className="payment-choice-icon"><Smartphone size={16} /></span><strong>Mobile money</strong><span>{APP_DEMO_MODE ? 'Demo only' : 'Provider confirmation'}</span></button>
++                <button className={`payment-choice ${paymentMethod === 'card' ? 'selected' : ''}`} onClick={() => setPaymentMethod('card')}><span className="payment-choice-icon"><CreditCard size={16} /></span><strong>Card</strong><span>{APP_DEMO_MODE ? 'Demo only' : 'Provider confirmation'}</span></button>
++              </>}
+             </div>
++            {CASH_ONLY_CHECKOUT && <div className="info-note">Cash is the only enabled payment method for this store. Card and mobile-money options are hidden.</div>}
+             {paymentMethod === 'cash' ? <>
+               <div className="field"><label htmlFor="cash-received">Cash received · GHS</label><input id="cash-received" inputMode="decimal" value={cashReceived} onChange={(event) => setCashReceived(event.target.value)} placeholder="0.00" autoFocus /></div>
+               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>{[cartTotals.totalMinor, cartTotals.totalMinor + 500, cartTotals.totalMinor + 1000, cartTotals.totalMinor + 2000].map((amount, index) => <button className="btn small" key={`${amount}-${index}`} onClick={() => setCashReceived(inputFromMinor(amount))}>{index === 0 ? 'Exact' : `+ GHS ${(amount - cartTotals.totalMinor) / 100}`}</button>)}</div>
 @@ -1361,14 +1612,14 @@ export function PosApp() {
          </Modal>}
  
