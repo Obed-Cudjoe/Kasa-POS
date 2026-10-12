@@ -42,7 +42,7 @@ index 0000000000000000000000000000000000000000..c94711948a665d304dfc7016e1bebc49
 @@ -0,0 +1 @@
 +22.23.2
 diff --git a/README.md b/README.md
-index 32a34b1860613757158f731948b66c70bbbd9cae..1a4769b0722b6b4a9765b4494b70e73829438fb6 100644
+index 32a34b1860613757158f731948b66c70bbbd9cae..fb221897750f7a37708147cee6517dc0d9a8a37f 100644
 --- a/README.md
 +++ b/README.md
 @@ -1,240 +1,76 @@
@@ -133,7 +133,7 @@ index 32a34b1860613757158f731948b66c70bbbd9cae..1a4769b0722b6b4a9765b4494b70e738
 +7. Keep `NEXT_PUBLIC_DEMO_MODE=true` during setup. Switch it to `false` only in the Cloudflare **build environment** after D1 migrations and secrets are ready. Then test owner registration, email verification, staff invitation, login, recovery, role boundaries and sync using synthetic data.
  
 -### PWA and offline test
-+The D1 binding ID is still an operator-provided Cloudflare resource. A missing ID or missing secrets means this repository is **not ready for remote deployment**. Public email links require a valid `PUBLIC_APP_URL`; Resend sender-domain verification is also required.
++The `DB` binding in `wrangler.jsonc` now points to the Cloudflare-created `kasa-pos-staging` database. Its remote migrations still need to be applied, and Worker secrets/variables still need to be configured before remote auth can work. If you use another environment, replace the database ID with that environment’s Cloudflare-issued ID. Public email links require a valid `PUBLIC_APP_URL`; Resend sender-domain verification is also required.
  
 -The service worker is disabled in development to avoid caching stale development bundles. Build and run production locally to test PWA installation and service-worker behavior:
 +## Quality checks
@@ -1679,17 +1679,19 @@ index aae9453b91e89a379ce726989cb560573a19417a..0b9017cdd63753e5e7f538af60b18504
  | ID | Finding | Change made | Verification | Residual risk/status |
 diff --git a/reports/CLOUDFLARE_WORKERS_DEPLOYMENT_GUIDE.md b/reports/CLOUDFLARE_WORKERS_DEPLOYMENT_GUIDE.md
 new file mode 100644
-index 0000000000000000000000000000000000000000..6d52b3f62816bd6cf79252948b3bdaac681e4168
+index 0000000000000000000000000000000000000000..705b1c8108168183ccf7093fd3ebfc7fd36f79fb
 --- /dev/null
 +++ b/reports/CLOUDFLARE_WORKERS_DEPLOYMENT_GUIDE.md
-@@ -0,0 +1,81 @@
+@@ -0,0 +1,83 @@
 +# Kasa POS · Cloudflare Workers and D1 staging checklist
 +
-+**Status:** Deployment instructions only. This workspace does not have the D1 database ID or Cloudflare/GitHub push credentials. The public `workers.dev` app is still demo-only until the staging checklist passes. Use synthetic data only.
++**Status:** The `kasa-pos-staging` D1 ID is now recorded in `wrangler.jsonc`, but its remote migrations have not been applied because this workspace has no authenticated Cloudflare session. The public `workers.dev` app remains demo-only until the staging checklist passes. Use synthetic data only.
 +
-+## 1. Create and bind a new D1 database
++## 1. Create and bind a D1 database
 +
-+1. Sign in to the intended Cloudflare account and create a **new D1 database**, for example `kasa-pos-staging`.
++The user-created `kasa-pos-staging` database ID is already recorded in this checkout’s `wrangler.jsonc`. For that database, verify the binding name/ID and continue at step 3. Only create another database if you intentionally want a separate environment.
++
++1. For a new environment, sign in to the intended Cloudflare account and create a **new D1 database**, for example `kasa-pos-staging`.
 +2. Copy the database ID Cloudflare returns. In `wrangler.jsonc`, add it to the existing binding:
 +
 +   ```jsonc
@@ -6718,10 +6720,10 @@ index 10c35ec2a4f5a8490d044e8332164ad2429a01e4..00000000000000000000000000000000
 -
 -commit;
 diff --git a/wrangler.jsonc b/wrangler.jsonc
-index dd9e8b46b9d80e3515dc7a7338b23d88bd10fad7..c8a76593a51b77641d4c1617e3cdcd5d08d0f1dc 100644
+index dd9e8b46b9d80e3515dc7a7338b23d88bd10fad7..958f78d1ba0ba9561439194634350c35649e0ec4 100644
 --- a/wrangler.jsonc
 +++ b/wrangler.jsonc
-@@ -1,10 +1,21 @@
+@@ -1,10 +1,22 @@
  {
    "$schema": "node_modules/wrangler/config-schema.json",
 -  "name": "kasa-pos-pwa",
@@ -6738,13 +6740,14 @@ index dd9e8b46b9d80e3515dc7a7338b23d88bd10fad7..c8a76593a51b77641d4c1617e3cdcd5d
 +    {
 +      "binding": "DB",
 +      "database_name": "kasa-pos-staging",
++      "database_id": "209531ff-5861-49f1-aa4e-e696117ab2a7",
 +      "migrations_dir": "migrations"
 +    }
 +  ],
    "assets": {
      "directory": ".open-next/assets",
      "binding": "ASSETS"
-@@ -12,7 +23,7 @@
+@@ -12,7 +24,7 @@
    "services": [
      {
        "binding": "WORKER_SELF_REFERENCE",
